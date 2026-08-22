@@ -15,6 +15,13 @@
       "when": 1787395224935,
       "tag": "0001_icy_vulcan",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1787395353030,
+      "tag": "0002_dry_vivisector",
+      "breakpoints": true
     }
   ]
 }

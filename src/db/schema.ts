@@ -26,6 +26,21 @@ export const memberSessions = mysqlTable('member_sessions', {
 });
 
 /**
+ * 工作空间（CONTEXT.md：看板与 Agent 的容器）。v1 每成员唯一「我的空间」，
+ * owner 唯一约束在库层保证。
+ */
+export const workspaces = mysqlTable('workspaces', {
+  id: int('id').autoincrement().primaryKey(),
+  ownerId: int('owner_id')
+    .notNull()
+    .unique()
+    .references(() => members.id),
+  kind: mysqlEnum('kind', ['my_space']).notNull().default('my_space'),
+  name: varchar('name', { length: 64 }).notNull().default('我的空间'),
+  createdAt: timestamp('created_at', { fsp: 3 }).notNull().defaultNow(),
+});
+
+/**
  * Diagnostics table backing GET/POST /api/system/ping — proves the full
  * API → database write/read path (used by tests and smoke checks).
  */
@@ -36,4 +51,5 @@ export const systemPings = mysqlTable('system_pings', {
 });
 
 export type Member = typeof members.$inferSelect;
+export type Workspace = typeof workspaces.$inferSelect;
 export type SystemPing = typeof systemPings.$inferSelect;
