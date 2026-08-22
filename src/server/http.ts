@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import type { Member } from '@/db/schema';
+import type { Agent, Member } from '@/db/schema';
+import { resolveAgentByToken } from './kernel/agents';
 import { ProtocolError } from './kernel/protocol';
 import {
   SESSION_COOKIE,
@@ -69,11 +70,28 @@ export function readSessionCookie(request: Request): string | undefined {
   return undefined;
 }
 
-/** 成员守卫：会话缺失/无效 → 401 协议错误。 */
+/** 成员守卫：会话缺失/无效 → 401 协议错误。只认 cookie，不认 Bearer。 */
 export async function requireMember(request: Request): Promise<Member> {
   const member = await resolveSessionToken(readSessionCookie(request));
   if (!member) {
     throw new ProtocolError(401, 'unauthorized', 'member session required');
   }
   return member;
+}
+
+/** Agent 守卫：Bearer token 鉴权（与成员会话不混用）。 */
+export async function requireAgent(request: Request): Promise<Agent> {
+  const header = request.headers.get('authorization');
+  if (!header?.startsWith('Bearer ')) {
+    throw new ProtocolError(
+      401,
+      'agent_auth_required',
+      'Authorization: Bearer <agent token> required',
+    );
+  }
+  const agent = await resolveAgentByToken(header.slice('Bearer '.length).trim());
+  if (!agent) {
+    throw new ProtocolError(401, 'agent_auth_required', 'invalid agent token');
+  }
+  return agent;
 }

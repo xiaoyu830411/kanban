@@ -1,6 +1,6 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, isNull, or, sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
-import { tasks, workspaces, type Task } from '@/db/schema';
+import { agents, tasks, workspaces, type Agent, type Task } from '@/db/schema';
 import { isBoardColumn, type BoardColumn } from './board-columns';
 import { getEventBus } from './event-bus';
 import type { Actor } from './events';
@@ -189,6 +189,130 @@ export async function applyMove(taskId: number, to: BoardColumn): Promise<Task> 
   await getDb()
     .update(tasks)
     .set({ column: to, updatedAt: new Date() })
+    .where(eq(tasks.id, taskId));
+  return getTaskById(taskId);
+}
+
+// ---- Agent 认领协议（T7，ADR-0002：看板不管理进程，Agent 主动 pull） ----
+
+/** Agent 的活动空间＝其属主的「我的空间」。任务不在其中 → 404（不可见）。 */
+export async function requireAgentScopedTask(agent: Agent, taskId: number): Promise<Task> {
+  const task = await getTaskById(taskId);
+  const workspace = await ensureMySpace(agent.ownerId);
+  if (task.workspaceId !== workspace.id) {
+    throw new ProtocolError(404, 'task_not_found', `task ${taskId} not found`);
+  }
+  return task;
+}
+
+/** 可认领列表：待办列、未指派或指派给自己，且在属主空间内。 */
+export async function listClaimableTasks(agent: Agent): Promise<Task[]> {
+  const workspace = await ensureMySpace(agent.ownerId);
+  return getDb()
+    .select()
+    .from(tasks)
+    .where(
+      and(
+        eq(tasks.workspaceId, workspace.id),
+        eq(tasks.column, 'todo'),
+        or(isNull(tasks.assigneeAgentId), eq(tasks.assigneeAgentId, agent.id)),
+      ),
+    )
+    .orderBy(tasks.createdAt);
+}
+
+/**
+ * 认领：待办 → 进行中并独占持有。
+ * 原子 UPDATE（WHERE column='todo' AND 指派约束）防双抢：并发只有一个成功。
+ */
+export async function claimTask(agent: Agent, taskId: number): Promise<Task> {
+  const task = await requireAgentScopedTask(agent, taskId);
+
+  if (task.column !== 'todo') {
+    if (task.heldByAgentId !== null && task.heldByAgentId !== agent.id) {
+      throw new ProtocolError(409, 'claim_conflict', 'task is already held by another agent');
+    }
+    throw new ProtocolError(
+      409,
+      'not_claimable',
+      `task is in "${task.column}"; only "todo" tasks can be claimed`,
+    );
+  }
+  if (task.assigneeAgentId !== null && task.assigneeAgentId !== agent.id) {
+    throw new ProtocolError(
+      403,
+      'not_assignable',
+      'task is assigned to another agent',
+    );
+  }
+
+  const result = await getDb()
+    .update(tasks)
+    .set({ column: 'in_progress', heldByAgentId: agent.id, updatedAt: new Date() })
+    .where(
+      and(
+        eq(tasks.id, taskId),
+        eq(tasks.column, 'todo'),
+        or(isNull(tasks.assigneeAgentId), eq(tasks.assigneeAgentId, agent.id)),
+      ),
+    );
+  // mysql2 的 update 结果是 [ResultSetHeader, FieldPacket[]]
+  const affected = (result[0] as { affectedRows: number }).affectedRows;
+  if (affected === 0) {
+    throw new ProtocolError(409, 'claim_conflict', 'task was claimed or changed concurrently');
+  }
+
+  const updated = await getTaskById(taskId);
+  await getEventBus().publish('task.claimed', {
+    taskId,
+    from: 'todo',
+    to: 'in_progress',
+    actor: { type: 'agent', id: agent.id },
+  });
+  return updated;
+}
+
+/** Agent 移列：仅持有者；矩阵（进行中 → 待验收）；「已完成」对 Agent 永远 403（ADR-0001）。 */
+export async function moveTaskAsAgent(agent: Agent, taskId: number, to: string): Promise<Task> {
+  if (!isBoardColumn(to)) {
+    throw new ProtocolError(400, 'invalid_column', `"${String(to)}" is not a board column`);
+  }
+  const task = await requireAgentScopedTask(agent, taskId);
+  if (task.heldByAgentId !== agent.id) {
+    throw new ProtocolError(403, 'not_holder', 'only the holding agent can move this task');
+  }
+  assertMoveAllowed('agent', task.column, to);
+
+  const updated = await applyMove(task.id, to);
+  await getEventBus().publish('task.moved', {
+    taskId: task.id,
+    from: task.column,
+    to,
+    actor: { type: 'agent', id: agent.id },
+  });
+  return updated;
+}
+
+/** 成员指派（Assign）：仅自己空间内、未被持有的任务；agentId 置空＝取消指派。 */
+export async function assignTask(
+  memberId: number,
+  taskId: number,
+  agentId: number | null,
+): Promise<Task> {
+  const task = await requireOwnTask(memberId, taskId);
+  if (task.heldByAgentId !== null) {
+    throw new ProtocolError(409, 'task_held', 'cannot reassign a task held by an agent');
+  }
+  if (agentId !== null) {
+    const rows = await getDb().select().from(agents).where(eq(agents.id, agentId)).limit(1);
+    const agent = rows[0];
+    if (!agent || agent.ownerId !== memberId) {
+      throw new ProtocolError(400, 'invalid_agent', 'agent not found in your space');
+    }
+  }
+  await getDb()
+    .update(tasks)
+    .set({ assigneeAgentId: agentId, updatedAt: new Date() })
     .where(eq(tasks.id, taskId));
   return getTaskById(taskId);
 }
