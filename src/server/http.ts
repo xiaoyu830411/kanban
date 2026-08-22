@@ -1,30 +1,19 @@
 import { NextResponse } from 'next/server';
 import type { Member } from '@/db/schema';
+import { ProtocolError } from './kernel/protocol';
 import {
   SESSION_COOKIE,
   SESSION_COOKIE_MAX_AGE,
   resolveSessionToken,
 } from './kernel/sessions';
 
-/**
- * API 层统一协议：错误一律 `{ error: { code, message } }`，
- * 机器可读的 code 是协议的一部分（Agent 侧依赖它，见 T7/T12）。
- */
-export class ApiError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-    message: string,
-  ) {
-    super(message);
-  }
-}
+export { ProtocolError as ApiError };
 
 export async function handleRoute(fn: () => Promise<Response>): Promise<Response> {
   try {
     return await fn();
   } catch (error) {
-    if (error instanceof ApiError) {
+    if (error instanceof ProtocolError) {
       return NextResponse.json(
         { error: { code: error.code, message: error.message } },
         { status: error.status },
@@ -46,7 +35,7 @@ export async function parseJsonBody(request: Request): Promise<Record<string, un
     const parsed: unknown = JSON.parse(raw);
     return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
   } catch {
-    throw new ApiError(400, 'invalid_json', 'request body must be valid JSON');
+    throw new ProtocolError(400, 'invalid_json', 'request body must be valid JSON');
   }
 }
 
@@ -84,7 +73,7 @@ export function readSessionCookie(request: Request): string | undefined {
 export async function requireMember(request: Request): Promise<Member> {
   const member = await resolveSessionToken(readSessionCookie(request));
   if (!member) {
-    throw new ApiError(401, 'unauthorized', 'member session required');
+    throw new ProtocolError(401, 'unauthorized', 'member session required');
   }
   return member;
 }

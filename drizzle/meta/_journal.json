@@ -22,6 +22,13 @@
       "when": 1787395353030,
       "tag": "0002_dry_vivisector",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1787395564583,
+      "tag": "0003_useful_psynapse",
+      "breakpoints": true
     }
   ]
 }
