@@ -60,14 +60,28 @@ export const tasks = mysqlTable('tasks', {
   labels: json('labels').$type<string[]>().notNull().default([]),
   column: mysqlEnum('column', [...BOARD_COLUMNS]).notNull().default('to_plan'),
   /** 指派（Assign）：可选；指派后仅该 Agent 可认领。 */
-  assigneeAgentId: int('assignee_agent_id'),
+  assigneeAgentId: int('assignee_agent_id').references(() => agents.id),
   /** 认领后的独占持有者。 */
-  heldByAgentId: int('held_by_agent_id'),
+  heldByAgentId: int('held_by_agent_id').references(() => agents.id),
   createdById: int('created_by_id')
     .notNull()
     .references(() => members.id),
   createdAt: timestamp('created_at', { fsp: 3 }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { fsp: 3 }).notNull().defaultNow(),
+});
+
+/**
+ * Agent（CONTEXT.md：成员创建并拥有的自动化执行者，持有一个 API token）。
+ * token 明文仅创建时展示一次，库里只存 sha256 散列；v1 无吊销、无停用。
+ */
+export const agents = mysqlTable('agents', {
+  id: int('id').autoincrement().primaryKey(),
+  ownerId: int('owner_id')
+    .notNull()
+    .references(() => members.id),
+  name: varchar('name', { length: 64 }).notNull(),
+  tokenHash: varchar('token_hash', { length: 64 }).notNull().unique(),
+  createdAt: timestamp('created_at', { fsp: 3 }).notNull().defaultNow(),
 });
 
 /**
@@ -83,4 +97,5 @@ export const systemPings = mysqlTable('system_pings', {
 export type Member = typeof members.$inferSelect;
 export type Workspace = typeof workspaces.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
+export type Agent = typeof agents.$inferSelect;
 export type SystemPing = typeof systemPings.$inferSelect;

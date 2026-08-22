@@ -31,6 +31,9 @@ export default async function BoardPage() {
               {member.role === 'admin' ? '管理员' : '成员'}
             </span>
           </span>
+          <a href="/agents" className="text-neutral-500 hover:text-neutral-800">
+            Agent
+          </a>
           <LogoutButton />
         </div>
       </header>
