@@ -1,4 +1,4 @@
-import { mysqlTable, varchar, timestamp, int, mysqlEnum, json, text } from 'drizzle-orm/mysql-core';
+import { mysqlTable, varchar, timestamp, int, mysqlEnum, json, text, boolean } from 'drizzle-orm/mysql-core';
 import { BOARD_COLUMNS } from '@/server/kernel/board-columns';
 import { TASK_PRIORITIES } from '@/server/kernel/task-meta';
 
@@ -85,6 +85,42 @@ export const agents = mysqlTable('agents', {
 });
 
 /**
+ * 验收清单（DoD，CONTEXT.md）：挂在任务上的人工验收清单，每项可附证据说明。
+ * 成员定义清单；成员与 Agent 均可勾选（勾选者留痕）。
+ */
+export const taskDodItems = mysqlTable('task_dod_items', {
+  id: int('id').autoincrement().primaryKey(),
+  taskId: int('task_id')
+    .notNull()
+    .references(() => tasks.id),
+  content: varchar('content', { length: 500 }).notNull(),
+  position: int('position').notNull().default(0),
+  checked: boolean('checked').notNull().default(false),
+  evidence: text('evidence'),
+  checkedByType: mysqlEnum('checked_by_type', ['member', 'agent']),
+  checkedById: int('checked_by_id'),
+  checkedAt: timestamp('checked_at', { fsp: 3 }),
+  createdAt: timestamp('created_at', { fsp: 3 }).notNull().defaultNow(),
+});
+
+/**
+ * 任务评论与执行报告（报告＝自由文本评论＋改动文件列表）。
+ * 成员与 Agent 均可读；报告仅持有 Agent 可提交。
+ */
+export const taskComments = mysqlTable('task_comments', {
+  id: int('id').autoincrement().primaryKey(),
+  taskId: int('task_id')
+    .notNull()
+    .references(() => tasks.id),
+  kind: mysqlEnum('kind', ['comment', 'report']).notNull().default('comment'),
+  authorType: mysqlEnum('author_type', ['member', 'agent']).notNull(),
+  authorId: int('author_id').notNull(),
+  body: text('body').notNull(),
+  changedFiles: json('changed_files').$type<string[]>().notNull().default([]),
+  createdAt: timestamp('created_at', { fsp: 3 }).notNull().defaultNow(),
+});
+
+/**
  * Diagnostics table backing GET/POST /api/system/ping — proves the full
  * API → database write/read path (used by tests and smoke checks).
  */
@@ -98,4 +134,6 @@ export type Member = typeof members.$inferSelect;
 export type Workspace = typeof workspaces.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
 export type Agent = typeof agents.$inferSelect;
+export type TaskDodItem = typeof taskDodItems.$inferSelect;
+export type TaskComment = typeof taskComments.$inferSelect;
 export type SystemPing = typeof systemPings.$inferSelect;
