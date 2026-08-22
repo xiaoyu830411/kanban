@@ -1,4 +1,4 @@
-import type { MemberIdentity } from '@/server/kernel/members';
+import type { MemberIdentity } from '@/server/kernel/members'; // 仅类型契约，无运行时依赖
 
 /**
  * 认证 provider 接口（auth 插件内部契约，内核不感知）。

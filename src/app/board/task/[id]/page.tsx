@@ -13,6 +13,23 @@ import TaskActions from './task-actions';
 import DodList from './dod-list';
 import CommentComposer from './comment-composer';
 import { CommentStream } from './comment-stream';
+import { listTaskActivity } from '@/plugins/activity/plugin';
+
+const ACTION_LABELS: Record<string, (detail: Record<string, unknown>) => string> = {
+  created: (detail) => `创建了任务（初始列：${columnLabel(detail.column)}）`,
+  claimed: (detail) => `认领了任务（${columnLabel(detail.from)} → ${columnLabel(detail.to)}）`,
+  moved: (detail) => `移动了任务（${columnLabel(detail.from)} → ${columnLabel(detail.to)}）`,
+  reported: () => '提交了执行报告',
+  commented: () => '添加了评论',
+  accepted: () => '验收通过（任务完成）',
+  rejected: () => '退回了任务（回到进行中）',
+};
+
+function columnLabel(value: unknown): string {
+  return typeof value === 'string' && value in BOARD_COLUMN_LABELS
+    ? BOARD_COLUMN_LABELS[value as keyof typeof BOARD_COLUMN_LABELS]
+    : String(value);
+}
 
 export const dynamic = 'force-dynamic';
 
@@ -28,10 +45,11 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
     throw error;
   });
 
-  const [dod, comments, agents] = await Promise.all([
+  const [dod, comments, agents, activity] = await Promise.all([
     listDodItems(task.id),
     listTaskComments(task.id),
     listAgentsByOwner(member.id),
+    listTaskActivity(task.id),
   ]);
   const agentNames = new Map(agents.map((agent) => [agent.id, agent.name]));
 
@@ -108,6 +126,29 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
           }))}
         />
         <CommentComposer taskId={task.id} />
+      </section>
+
+      <section className="rounded-lg border border-neutral-200 bg-white p-5">
+        <h2 className="mb-3 text-sm font-medium text-neutral-600">动态</h2>
+        {activity.length === 0 ? (
+          <p className="text-sm text-neutral-400">暂无动态。</p>
+        ) : (
+          <ol className="flex flex-col gap-2">
+            {activity.map((entry) => (
+              <li key={entry.id} className="flex items-baseline gap-2 text-sm">
+                <time className="w-36 shrink-0 text-xs text-neutral-400">
+                  {new Date(entry.occurredAt).toLocaleString('zh-CN')}
+                </time>
+                <span className={entry.actorType === 'agent' ? 'font-medium text-violet-600' : 'font-medium text-neutral-700'}>
+                  {entry.actorName}
+                </span>
+                <span className="text-neutral-600">
+                  {(ACTION_LABELS[entry.action] ?? (() => entry.action))(entry.detail)}
+                </span>
+              </li>
+            ))}
+          </ol>
+        )}
       </section>
     </div>
   );

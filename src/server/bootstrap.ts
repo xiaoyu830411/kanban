@@ -1,3 +1,4 @@
+import { activityPlugin } from '@/plugins/activity/plugin';
 import { authPlugin } from '@/plugins/auth/plugin';
 import { getPluginHost } from './kernel/plugin';
 
@@ -10,10 +11,12 @@ export async function bootstrap(): Promise<void> {
   if (g.__kanbanBootstrapped) return;
 
   const host = getPluginHost();
-  try {
-    host.register(authPlugin);
-  } catch {
-    // HMR/重入：插件已注册
+  for (const plugin of [authPlugin, activityPlugin]) {
+    try {
+      host.register(plugin);
+    } catch {
+      // HMR/重入：插件已注册
+    }
   }
   await host.start();
   g.__kanbanBootstrapped = true;
