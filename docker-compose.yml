@@ -1,0 +1,42 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: kanban-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-kanban}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-kanban}
+    ports:
+      # 3307 on host to avoid clashing with a MySQL already running on 3306
+      - '3307:3306'
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', '127.0.0.1', '-p${MYSQL_ROOT_PASSWORD:-kanban}']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  app:
+    build: .
+    container_name: kanban-app
+    environment:
+      DATABASE_URL: mysql://root:${MYSQL_ROOT_PASSWORD:-kanban}@mysql:3306/${MYSQL_DATABASE:-kanban}
+      NODE_ENV: production
+      # Auth (T3/T11) — set real values here for deployment
+      AUTH_DEV_ENABLED: ${AUTH_DEV_ENABLED:-false}
+      FEISHU_APP_ID: ${FEISHU_APP_ID:-}
+      FEISHU_APP_SECRET: ${FEISHU_APP_SECRET:-}
+      FEISHU_REDIRECT_URI: ${FEISHU_REDIRECT_URI:-}
+    ports:
+      - '3000:3000'
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3000/api/health']
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  mysql_data:
