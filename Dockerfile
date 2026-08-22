@@ -18,6 +18,9 @@ ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     HOSTNAME=0.0.0.0 \
     PORT=3000
+# migrations need mysql2 + drizzle-orm at runtime (standalone bundles them
+# into server chunks, so they are not in the traced node_modules)
+RUN npm install --omit=dev --no-save mysql2 drizzle-orm
 COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static
 COPY --from=build /app/public ./public
