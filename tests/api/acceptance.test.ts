@@ -4,7 +4,6 @@ import { POST as devLogin } from '@/app/api/auth/dev/login/route';
 import { GET as meRoute } from '@/app/api/me/route';
 import { POST as createTaskRoute } from '@/app/api/tasks/route';
 import { POST as memberDodRoute } from '@/app/api/tasks/[id]/dod/route';
-import { PATCH as memberDodCheckRoute } from '@/app/api/tasks/[id]/dod/[itemId]/check/route';
 import { PATCH as memberMoveRoute } from '@/app/api/tasks/[id]/move/route';
 import { POST as acceptRoute } from '@/app/api/tasks/[id]/accept/route';
 import { POST as rejectRoute } from '@/app/api/tasks/[id]/reject/route';
