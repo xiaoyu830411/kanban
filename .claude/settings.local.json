@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(echo \"---exit $?\")",
+      "Bash(gh auth *)",
+      "WebFetch(domain:github.com)",
+      "Bash(/opt/homebrew/bin/gh auth *)",
+      "Bash(/opt/homebrew/bin/gh repo *)",
+      "Bash(/opt/homebrew/bin/gh label *)",
+      "Bash(/opt/homebrew/bin/gh issue *)",
+      "Bash(git -C /Users/jonas/Projects/kanban log --oneline -5)",
+      "Bash(git -C /Users/jonas/Projects/kanban status --short)",
+      "Bash(npm --version)",
+      "Bash(docker --version)",
+      "Bash(docker compose *)",
+      "Bash(open -a Docker)",
+      "Read(//opt/homebrew/opt/**)",
+      "Bash(npm view *)",
+      "Bash(/usr/local/mysql/bin/mysqladmin --host=127.0.0.1 --port=3306 ping 2>&1 | head -2; lsof -nP -iTCP:3306 -sTCP:LISTEN 2>/dev/null | head -3; lsof -nP -iTCP:3307 -sTCP:LISTEN 2>/dev/null | head -3; lsof -nP -iTCP:3000 -sTCP:LISTEN 2>/dev/null | head -3; true)",
+      "Bash(npm install *)",
+      "Bash(docker info *)",
+      "Bash(grep -E '^\\(next|vitest|drizzle-kit|tsc|eslint\\)$')"
+    ]
+  }
+}
