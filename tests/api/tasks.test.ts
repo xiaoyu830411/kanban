@@ -8,6 +8,7 @@ import { getDb } from '@/db/client';
 import { tasks } from '@/db/schema';
 import { getEventBus } from '@/server/kernel/event-bus';
 import type { DomainEvent } from '@/server/kernel/events';
+import { createAgent as createAgentByKernel } from '@/server/kernel/agents';
 import { apiRequest, setupIsolatedDb } from '../helpers';
 
 async function login(name: string): Promise<string> {
@@ -203,8 +204,9 @@ describe('删除任务（DELETE /api/tasks/:id）', () => {
   it('被 Agent 持有的任务不可删除（409 task_held）', async () => {
     const cookie = await login('jonas');
     const { task } = await createTask(cookie, { title: '被持有' });
-    // agents 表 T6 才有：直接模拟持有状态
-    await getDb().update(tasks).set({ heldByAgentId: 999 }).where(eq(tasks.id, task!.id));
+    // 模拟认领后的持有状态：直接把任务挂到真实 Agent 上
+    const { agent } = await createAgentByKernel(1, 'holder-agent');
+    await getDb().update(tasks).set({ heldByAgentId: agent.id }).where(eq(tasks.id, task!.id));
 
     const response = await deleteTaskRoute(apiRequest(taskPath(task!.id), { method: 'DELETE', headers: { cookie } }), {
       params: Promise.resolve({ id: String(task!.id) }),
