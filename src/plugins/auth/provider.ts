@@ -10,6 +10,14 @@ export interface AuthProvider {
   resolveIdentity(input: Record<string, unknown>): Promise<MemberIdentity>;
 }
 
+/** OAuth 型 provider（飞书扫码）：跳转授权页 + 授权码换身份。 */
+export interface OAuthProvider extends AuthProvider {
+  /** 登录入口：授权（扫码）页 URL。 */
+  authorizeUrl(state: string): string;
+  /** 回调：授权码换取外部身份。 */
+  exchangeCode(code: string): Promise<MemberIdentity>;
+}
+
 export class AuthProviderError extends Error {
   constructor(
     readonly status: number,

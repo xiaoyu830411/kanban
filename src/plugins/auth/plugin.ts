@@ -1,4 +1,5 @@
 import type { Plugin } from '@/server/kernel/plugin';
+import { getFeishuProvider } from './feishu-provider';
 
 /**
  * auth 插件（ADR-0004：以插件实现、可被替换）。
@@ -13,11 +14,11 @@ export function isDevProviderEnabled(): boolean {
   return process.env.NODE_ENV !== 'production';
 }
 
-/** 当前启用的登录入口（登录页据此渲染）。 */
+/** 当前启用的登录入口（登录页据此渲染；含测试替换的 provider）。 */
 export function enabledLoginProviders(): Array<'dev' | 'feishu'> {
   const providers: Array<'dev' | 'feishu'> = [];
   if (isDevProviderEnabled()) providers.push('dev');
-  if (process.env.FEISHU_APP_ID && process.env.FEISHU_APP_SECRET) providers.push('feishu');
+  if (getFeishuProvider() !== null) providers.push('feishu');
   return providers;
 }
 

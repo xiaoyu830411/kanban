@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node scripts/migrate.mjs",
+    "feishu:setup": "bash scripts/feishu-setup.sh",
     "test": "vitest run",
     "test:watch": "vitest"
   },
