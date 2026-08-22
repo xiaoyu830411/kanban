@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useMemo, useState } from 'react';
 import {
   BOARD_COLUMNS,
@@ -192,7 +193,9 @@ export default function BoardView({ initialTasks }: Props) {
                     }`}
                   >
                     <div className="flex items-start justify-between gap-2">
-                      <h3 className="text-sm font-medium leading-5">{task.title}</h3>
+                      <Link href={`/board/task/${task.id}`} className="text-sm font-medium leading-5 hover:underline">
+                        {task.title}
+                      </Link>
                       {!task.heldByAgentId && (
                         <button
                           type="button"
