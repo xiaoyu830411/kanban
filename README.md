@@ -56,6 +56,7 @@ Vitest 连接真实 MySQL 测试库（`TEST_DATABASE_URL`，默认 `kanban_test`
 | `TEST_DATABASE_URL` | Vitest 测试库连接串 | `mysql://root:kanban@127.0.0.1:3307/kanban_test` |
 | `MYSQL_ROOT_PASSWORD` | compose 中 MySQL root 密码（需与连接串一致） | `kanban` |
 | `AUTH_DEV_ENABLED` | 开发登录入口开关（生产默认关闭） | `false` |
+| `COOKIE_SECURE` | 会话 cookie 加 Secure 标志（HTTPS 部署开启；本地 HTTP 关闭） | `false` |
 | `FEISHU_APP_ID` / `FEISHU_APP_SECRET` / `FEISHU_REDIRECT_URI` | 飞书自建应用凭据（交互式配置向导：`npm run feishu:setup`，详见 `docs/agents/feishu-setup.md`） | 空 |
 
 ## 常用脚本

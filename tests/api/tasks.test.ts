@@ -5,7 +5,9 @@ import { GET as listTasksRoute, POST as createTaskRoute } from '@/app/api/tasks/
 import { DELETE as deleteTaskRoute, GET as getTaskRoute } from '@/app/api/tasks/[id]/route';
 import { PATCH as moveTaskRoute } from '@/app/api/tasks/[id]/move/route';
 import { getDb } from '@/db/client';
-import { tasks } from '@/db/schema';
+import { taskComments, taskDodItems, tasks } from '@/db/schema';
+import { POST as dodRoute } from '@/app/api/tasks/[id]/dod/route';
+import { POST as commentRoute } from '@/app/api/tasks/[id]/comments/route';
 import { getEventBus } from '@/server/kernel/event-bus';
 import type { DomainEvent } from '@/server/kernel/events';
 import { createAgent as createAgentByKernel } from '@/server/kernel/agents';
@@ -199,6 +201,28 @@ describe('删除任务（DELETE /api/tasks/:id）', () => {
     });
     expect(response.status).toBe(200);
     expect(await getDb().select().from(tasks)).toHaveLength(0);
+  });
+
+  it('带 DoD 与评论的任务删除时一并清掉（外键不炸 500）', async () => {
+    const cookie = await login('jonas');
+    const { task } = await createTask(cookie, { title: '有内容的任务' });
+
+    await dodRoute(
+      apiRequest(taskPath(task!.id, '/dod'), { headers: { cookie }, body: { content: '事项' } }),
+      { params: Promise.resolve({ id: String(task!.id) }) },
+    );
+    await commentRoute(
+      apiRequest(taskPath(task!.id, '/comments'), { headers: { cookie }, body: { body: '留言' } }),
+      { params: Promise.resolve({ id: String(task!.id) }) },
+    );
+
+    const response = await deleteTaskRoute(apiRequest(taskPath(task!.id), { method: 'DELETE', headers: { cookie } }), {
+      params: Promise.resolve({ id: String(task!.id) }),
+    });
+    expect(response.status).toBe(200);
+    expect(await getDb().select().from(tasks)).toHaveLength(0);
+    expect(await getDb().select().from(taskDodItems)).toHaveLength(0);
+    expect(await getDb().select().from(taskComments)).toHaveLength(0);
   });
 
   it('被 Agent 持有的任务不可删除（409 task_held）', async () => {

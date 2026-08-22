@@ -42,22 +42,29 @@ export async function parseJsonBody(request: Request): Promise<Record<string, un
 
 // ---- 会话 cookie（成员侧） ----
 
+/**
+ * Secure 标志由 COOKIE_SECURE 显式开启（默认关）：
+ * 本地/内网 HTTP 部署（如 docker compose 的 http://localhost:3000）若强加
+ * Secure，浏览器会静默丢弃会话 cookie；HTTPS 部署应设 COOKIE_SECURE=true。
+ */
+function cookieSecureSuffix(): string {
+  return process.env.COOKIE_SECURE === 'true' ? '; Secure' : '';
+}
+
 export function sessionCookieHeader(token: string): string {
-  const parts = [
+  return [
     `${SESSION_COOKIE}=${token}`,
     'Path=/',
     'HttpOnly',
     'SameSite=Lax',
     `Max-Age=${SESSION_COOKIE_MAX_AGE}`,
-  ];
-  if (process.env.NODE_ENV === 'production') parts.push('Secure');
-  return parts.join('; ');
+  ].join('; ') + cookieSecureSuffix();
 }
 
 export function clearedSessionCookieHeader(): string {
-  const parts = [`${SESSION_COOKIE}=`, 'Path=/', 'HttpOnly', 'SameSite=Lax', 'Max-Age=0'];
-  if (process.env.NODE_ENV === 'production') parts.push('Secure');
-  return parts.join('; ');
+  return [`${SESSION_COOKIE}=`, 'Path=/', 'HttpOnly', 'SameSite=Lax', 'Max-Age=0'].join(
+    '; ',
+  ) + cookieSecureSuffix();
 }
 
 export function readSessionCookie(request: Request): string | undefined {

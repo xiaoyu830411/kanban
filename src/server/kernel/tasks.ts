@@ -1,6 +1,14 @@
 import { and, eq, isNull, or, sql } from 'drizzle-orm';
 import { getDb } from '@/db/client';
-import { agents, tasks, workspaces, type Agent, type Task } from '@/db/schema';
+import {
+  agents,
+  taskComments,
+  taskDodItems,
+  tasks,
+  workspaces,
+  type Agent,
+  type Task,
+} from '@/db/schema';
 import { isBoardColumn, type BoardColumn } from './board-columns';
 import { getEventBus } from './event-bus';
 import type { Actor } from './events';
@@ -171,15 +179,14 @@ export async function moveTaskAsMember(memberId: number, taskId: number, to: str
   if (!isBoardColumn(to)) {
     throw new ProtocolError(400, 'invalid_column', `"${String(to)}" is not a board column`);
   }
-  const target = to;
   const task = await requireOwnTask(memberId, taskId);
-  assertMoveAllowed('member', task.column, target);
+  assertMoveAllowed('member', task.column, to);
 
-  const updated = await applyMove(task.id, target);
+  const updated = await applyMove(task.id, to);
   await getEventBus().publish('task.moved', {
     taskId: task.id,
     from: task.column,
-    to: target,
+    to,
     actor: { type: 'member', id: memberId },
   });
   return updated;
@@ -317,7 +324,7 @@ export async function assignTask(
   return getTaskById(taskId);
 }
 
-/** 删除：仅未被 Agent 持有的任务（T5）。 */
+/** 删除：仅未被 Agent 持有的任务（T5）；连同其 DoD 与评论一并删除。 */
 export async function deleteTaskAsMember(memberId: number, taskId: number): Promise<void> {
   const task = await requireOwnTask(memberId, taskId);
   if (task.heldByAgentId !== null) {
@@ -327,7 +334,11 @@ export async function deleteTaskAsMember(memberId: number, taskId: number): Prom
       'task is held by an agent and cannot be deleted',
     );
   }
-  await getDb().delete(tasks).where(eq(tasks.id, taskId));
+  await getDb().transaction(async (tx) => {
+    await tx.delete(taskComments).where(eq(taskComments.taskId, taskId));
+    await tx.delete(taskDodItems).where(eq(taskDodItems.taskId, taskId));
+    await tx.delete(tasks).where(eq(tasks.id, taskId));
+  });
 }
 
 export function toPublicTask(task: Task): {
