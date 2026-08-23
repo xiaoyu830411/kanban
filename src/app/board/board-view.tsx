@@ -8,8 +8,6 @@ import {
   type BoardColumn,
 } from '@/server/kernel/board-columns';
 import {
-  TASK_EXECUTION_TYPES,
-  TASK_EXECUTION_TYPE_LABELS,
   TASK_PRIORITIES,
   TASK_PRIORITY_LABELS,
   type TaskExecutionType,
@@ -21,6 +19,7 @@ import {
   probeLauncher,
   type LauncherHealth,
 } from './launch';
+import TaskDialog, { type DialogAgent } from './task-dialog';
 
 export interface BoardTask {
   id: number;
@@ -37,15 +36,17 @@ export interface BoardTask {
 
 interface Props {
   initialTasks: BoardTask[];
+  /** 指派下拉用（统一任务弹窗）。 */
+  agents: DialogAgent[];
 }
 
-/** 看板交互面：拖拽整理（成员矩阵内）、筛选、建任务、删除。 */
-export default function BoardView({ initialTasks }: Props) {
+/** 看板交互面：拖拽整理（成员矩阵内）、筛选、建任务（弹窗）、删除。 */
+export default function BoardView({ initialTasks, agents }: Props) {
   const [tasks, setTasks] = useState<BoardTask[]>(initialTasks);
   const [priorityFilter, setPriorityFilter] = useState('');
   const [labelFilter, setLabelFilter] = useState('');
   const [notice, setNotice] = useState<{ kind: 'error' | 'info'; text: string } | null>(null);
-  const [creating, setCreating] = useState(false);
+  const [dialog, setDialog] = useState<{ mode: 'create' } | { mode: 'edit'; taskId: number } | null>(null);
   const [dragging, setDragging] = useState<number | null>(null);
   const [launcher, setLauncher] = useState<LauncherHealth | null>(null);
   const [launchingId, setLaunchingId] = useState<number | null>(null);
@@ -184,10 +185,10 @@ export default function BoardView({ initialTasks }: Props) {
       <div className="flex flex-wrap items-center gap-3">
         <button
           type="button"
-          onClick={() => setCreating((open) => !open)}
+          onClick={() => setDialog({ mode: 'create' })}
           className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white"
         >
-          {creating ? '收起表单' : '＋ 新建任务'}
+          ＋ 新建任务
         </button>
         <label className="flex items-center gap-1 text-sm text-neutral-600">
           优先级
@@ -228,12 +229,12 @@ export default function BoardView({ initialTasks }: Props) {
         </button>
       </div>
 
-      {creating && (
-        <CreateTaskForm
-          onDone={async () => {
-            setCreating(false);
-            await refresh();
-          }}
+      {dialog && (
+        <TaskDialog
+          agents={agents}
+          taskId={dialog.mode === 'edit' ? dialog.taskId : undefined}
+          onClose={() => setDialog(null)}
+          onSaved={refresh}
         />
       )}
 
@@ -276,16 +277,28 @@ export default function BoardView({ initialTasks }: Props) {
                       <Link href={`/board/task/${task.id}`} className="text-sm font-medium leading-5 hover:underline">
                         {task.title}
                       </Link>
-                      {!task.heldByAgentId && (
-                        <button
-                          type="button"
-                          aria-label="删除任务"
-                          onClick={() => void deleteTask(task.id)}
-                          className="text-xs text-neutral-400 hover:text-red-600"
-                        >
-                          ✕
-                        </button>
-                      )}
+                      <div className="flex items-center gap-2 text-xs text-neutral-400">
+                        {!task.heldByAgentId && task.column !== 'done' && (
+                          <button
+                            type="button"
+                            aria-label="编辑任务"
+                            onClick={() => setDialog({ mode: 'edit', taskId: task.id })}
+                            className="hover:text-neutral-700"
+                          >
+                            ✎
+                          </button>
+                        )}
+                        {!task.heldByAgentId && (
+                          <button
+                            type="button"
+                            aria-label="删除任务"
+                            onClick={() => void deleteTask(task.id)}
+                            className="hover:text-red-600"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
                     </div>
                     {task.labels.length > 0 && (
                       <div className="mt-1.5 flex flex-wrap gap-1">
@@ -300,6 +313,7 @@ export default function BoardView({ initialTasks }: Props) {
                       </div>
                     )}
                     <div className="mt-1.5 flex items-center gap-2 text-[11px] text-neutral-500">
+                      <span className="font-mono">#{task.id}</span>
                       <span
                         className={`rounded px-1.5 py-0.5 ${
                           task.priority === 'urgent'
@@ -336,131 +350,5 @@ export default function BoardView({ initialTasks }: Props) {
         })}
       </div>
     </div>
-  );
-}
-
-function CreateTaskForm({ onDone }: { onDone: () => Promise<void> | void }) {
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [priority, setPriority] = useState<TaskPriority>('medium');
-  const [labels, setLabels] = useState('');
-  const [executionType, setExecutionType] = useState<TaskExecutionType>('tmp');
-  const [executionTarget, setExecutionTarget] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      const response = await fetch('/api/tasks', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          title,
-          description,
-          priority,
-          labels: labels
-            .split(/[,，]/)
-            .map((label) => label.trim())
-            .filter(Boolean),
-          executionType,
-          ...(executionType !== 'tmp' ? { executionTarget } : {}),
-        }),
-      });
-      if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
-        setError(body?.error?.message ?? '创建失败');
-        return;
-      }
-      await onDone();
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <form onSubmit={submit} className="grid gap-3 rounded-lg border border-neutral-200 bg-white p-4 md:grid-cols-2 xl:grid-cols-5">
-      <label className="flex flex-col gap-1 text-sm xl:col-span-2">
-        标题
-        <input
-          value={title}
-          onChange={(event) => setTitle(event.target.value)}
-          required
-          maxLength={200}
-          className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm"
-        />
-      </label>
-      <label className="flex flex-col gap-1 text-sm xl:col-span-3">
-        描述
-        <input
-          value={description}
-          onChange={(event) => setDescription(event.target.value)}
-          placeholder="可选"
-          className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm"
-        />
-      </label>
-      <label className="flex flex-col gap-1 text-sm">
-        优先级
-        <select
-          value={priority}
-          onChange={(event) => setPriority(event.target.value as TaskPriority)}
-          className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm"
-        >
-          {TASK_PRIORITIES.map((value) => (
-            <option key={value} value={value}>
-              {TASK_PRIORITY_LABELS[value]}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="flex flex-col gap-1 text-sm">
-        标签（逗号分隔）
-        <input
-          value={labels}
-          onChange={(event) => setLabels(event.target.value)}
-          placeholder="bug, v1"
-          className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm"
-        />
-      </label>
-      <label className="flex flex-col gap-1 text-sm">
-        执行目录
-        <select
-          value={executionType}
-          onChange={(event) => setExecutionType(event.target.value as TaskExecutionType)}
-          className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm"
-        >
-          {TASK_EXECUTION_TYPES.map((value) => (
-            <option key={value} value={value}>
-              {TASK_EXECUTION_TYPE_LABELS[value]}
-            </option>
-          ))}
-        </select>
-      </label>
-      {executionType !== 'tmp' && (
-        <label className="flex flex-col gap-1 text-sm md:col-span-2">
-          {executionType === 'dir' ? '目录路径' : '仓库地址（本地路径或远端 URL）'}
-          <input
-            value={executionTarget}
-            onChange={(event) => setExecutionTarget(event.target.value)}
-            required
-            maxLength={500}
-            placeholder={executionType === 'dir' ? '/Users/you/Projects/foo' : 'git@github.com:acme/foo.git'}
-            className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm"
-          />
-        </label>
-      )}
-      <div className="flex items-end">
-        <button
-          type="submit"
-          disabled={busy || title.trim().length === 0}
-          className="rounded-md bg-neutral-900 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-40"
-        >
-          {busy ? '创建中…' : '创建'}
-        </button>
-      </div>
-      {error && <p className="text-sm text-red-600 md:col-span-2 xl:col-span-5">{error}</p>}
-    </form>
   );
 }

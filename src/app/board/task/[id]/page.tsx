@@ -10,6 +10,7 @@ import { BOARD_COLUMN_LABELS } from '@/server/kernel/board-columns';
 import { TASK_EXECUTION_TYPE_LABELS, TASK_PRIORITY_LABELS } from '@/server/kernel/task-meta';
 import { ProtocolError } from '@/server/kernel/protocol';
 import TaskActions from './task-actions';
+import EditTaskButton from './edit-task-button';
 import DodList from './dod-list';
 import CommentComposer from './comment-composer';
 import { CommentStream } from './comment-stream';
@@ -75,7 +76,15 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
       </header>
 
       <section className="rounded-lg border border-neutral-200 bg-white p-5">
-        <h1 className="text-xl font-semibold">{task.title}</h1>
+        <div className="flex items-start justify-between gap-3">
+          <h1 className="text-xl font-semibold">
+            {task.title}
+            <span className="ml-2 font-mono text-base font-normal text-neutral-400">#{task.id}</span>
+          </h1>
+          {task.heldByAgentId === null && task.column !== 'done' && (
+            <EditTaskButton taskId={task.id} agents={agents.map((agent) => ({ id: agent.id, name: agent.name }))} />
+          )}
+        </div>
         {task.heldByAgentId !== null && (
           <p className="mt-1 text-xs text-neutral-500">
             持有 Agent：{agentNames.get(task.heldByAgentId) ?? `#${task.heldByAgentId}`}

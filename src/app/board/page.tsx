@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { SESSION_COOKIE, resolveSessionToken } from '@/server/kernel/sessions';
 import { ensureMySpace } from '@/server/kernel/workspaces';
 import { listTasks } from '@/server/kernel/tasks';
+import { listAgentsByOwner } from '@/server/kernel/agents';
 import BoardView from './board-view';
 import LogoutButton from './logout-button';
 
@@ -15,7 +16,7 @@ export default async function BoardPage() {
   if (!member) redirect('/login');
 
   const workspace = await ensureMySpace(member.id);
-  const tasks = await listTasks(workspace.id);
+  const [tasks, agents] = await Promise.all([listTasks(workspace.id), listAgentsByOwner(member.id)]);
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -40,6 +41,7 @@ export default async function BoardPage() {
 
       <main className="flex flex-1 flex-col p-6">
         <BoardView
+          agents={agents.map((agent) => ({ id: agent.id, name: agent.name }))}
           initialTasks={tasks.map((task) => ({
             id: task.id,
             title: task.title,
