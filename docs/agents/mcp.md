@@ -15,12 +15,16 @@
 ## Claude Code 接入
 
 ```bash
-# 在 kanban 仓库目录（server.mjs 相对路径解析以仓库为根）：
+# server.mjs 必须用绝对路径注册——claude 会话可能跑在任意目录
+# （worktree、临时目录），相对路径只在 kanban 仓库根下能解析。
+# 想全局可用再加 --scope user。
 claude mcp add taskboard \
   --env TASKBOARD_TOKEN=kbt_xxxxxxxxxxxxxxxx \
   --env TASKBOARD_API_BASE=http://localhost:3000 \
-  -- node src/mcp/server.mjs
+  -- node /absolute/path/to/kanban/src/mcp/server.mjs
 ```
+
+经[本地启动器](./launcher.md)启动的 claude 会话不需要手工注册——启动器按仓库内绝对路径自动生成 `--mcp-config` 注入 `taskboard` server。
 
 接入后 Claude Code 获得 9 个工具：
 

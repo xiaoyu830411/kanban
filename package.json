@@ -15,6 +15,7 @@
     "db:migrate": "node scripts/migrate.mjs",
     "feishu:setup": "bash scripts/feishu-setup.sh",
     "mcp:demo": "node scripts/mcp-demo.mjs",
+    "launcher": "node scripts/launcher.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
