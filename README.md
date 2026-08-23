@@ -23,13 +23,38 @@ docker compose up --build
 ## 本地开发
 
 ```bash
-cp .env.example .env
 npm install
+```
+
+### 方式一：Docker 起 MySQL（默认）
+
+```bash
+cp .env.example .env
 
 # 只起 MySQL（宿主机 3307 端口），应用跑在本地
 docker compose up -d mysql
 
 npm run dev        # 开发服务器 http://localhost:3000
+```
+
+### 方式二：本机原生 MySQL（无 docker）
+
+机器上已有 MySQL（如官方安装包，默认端口 3306）时无需 docker：
+
+```bash
+# 1. 建专用账号（权限仅限 kanban / kanban_test 两库；-p 交互输入 root 密码。
+#    官方安装包的 mysql 不在 PATH 时用 /usr/local/mysql/bin/mysql）
+mysql -h127.0.0.1 -uroot -p -e "CREATE USER IF NOT EXISTS 'kanban'@'localhost' IDENTIFIED BY 'kanban'; CREATE USER IF NOT EXISTS 'kanban'@'127.0.0.1' IDENTIFIED BY 'kanban'; GRANT ALL ON kanban.* TO 'kanban'@'localhost'; GRANT ALL ON kanban.* TO 'kanban'@'127.0.0.1'; GRANT ALL ON kanban_test.* TO 'kanban'@'localhost'; GRANT ALL ON kanban_test.* TO 'kanban'@'127.0.0.1'; FLUSH PRIVILEGES;"
+
+# 2. .env 指向原生实例（端口按实际修改；其他变量见 .env.example）
+cat > .env <<'EOF'
+DATABASE_URL=mysql://kanban:kanban@127.0.0.1:3306/kanban
+TEST_DATABASE_URL=mysql://kanban:kanban@127.0.0.1:3306/kanban_test
+EOF
+
+# 3. 建库建表（migrate 脚本自建数据库）后起开发服务器
+npm run db:migrate
+npm run dev
 ```
 
 数据库结构变更：修改 `src/db/schema.ts` 后
@@ -45,6 +70,8 @@ npm run db:migrate    # 应用到开发库
 docker compose up -d mysql   # 测试需要 MySQL（用真实测试库，不用内存替身）
 npm test
 ```
+
+本机原生 MySQL（本地开发·方式二）无需 docker：`.env` 的 `TEST_DATABASE_URL` 指向本机实例后直接 `npm test`（vitest 会读 `.env` 中的该键，进程环境变量优先）。
 
 Vitest 连接真实 MySQL 测试库（`TEST_DATABASE_URL`，默认 `kanban_test`）：global setup 自动建库并应用迁移，用例间清空数据隔离；API 级测试直接调用 Next.js 路由处理器（请求 → 响应 → 落库可读回）。
 

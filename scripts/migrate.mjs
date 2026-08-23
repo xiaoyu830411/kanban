@@ -3,12 +3,24 @@
 // needs no manual setup. Runs both locally (npm run db:migrate) and in the
 // Docker entrypoint before the Next.js standalone server starts.
 import { createConnection } from 'mysql2/promise';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { relative } from 'node:path';
 import { drizzle } from 'drizzle-orm/mysql2';
 import { migrate } from 'drizzle-orm/mysql2/migrator';
 
-const url = process.env.DATABASE_URL;
+// DATABASE_URL 允许来自 .env（本地原生 MySQL 等场景）；进程环境优先（docker 由 compose 注入）。
+function envFileValue(key) {
+  try {
+    const line = readFileSync(new URL('../.env', import.meta.url), 'utf8')
+      .split('\n')
+      .find((entry) => entry.startsWith(`${key}=`));
+    return line ? line.slice(key.length + 1).trim() : undefined;
+  } catch {
+    return undefined; // 无 .env
+  }
+}
+
+const url = process.env.DATABASE_URL ?? envFileValue('DATABASE_URL');
 if (!url) {
   console.error('DATABASE_URL is not set');
   process.exit(1);
