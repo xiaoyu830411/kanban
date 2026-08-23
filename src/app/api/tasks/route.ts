@@ -33,7 +33,7 @@ export async function GET(request: Request) {
   });
 }
 
-/** 成员手工建任务：标题必填，可落待规划或待办。 */
+/** 成员手工建任务：标题必填；一律落待规划（#20，唯一入口列）。 */
 export async function POST(request: Request) {
   return handleRoute(async () => {
     const member = await requireMember(request);

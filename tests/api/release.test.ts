@@ -1,7 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { POST as devLogin } from '@/app/api/auth/dev/login/route';
-import { POST as createTaskRoute } from '@/app/api/tasks/route';
 import { POST as claimTaskRoute } from '@/app/api/agent/tasks/[id]/claim/route';
 import { POST as agentReleaseRoute } from '@/app/api/agent/tasks/[id]/release/route';
 import { POST as memberReleaseRoute } from '@/app/api/tasks/[id]/release/route';
@@ -14,17 +13,17 @@ import { createAgent as createAgentByKernel } from '@/server/kernel/agents';
 import { bootstrap } from '@/server/bootstrap';
 import { getEventBus } from '@/server/kernel/event-bus';
 import type { DomainEvent } from '@/server/kernel/events';
-import { apiRequest, setupIsolatedDb } from '../helpers';
+import { apiRequest, newTaskAt, setupIsolatedDb } from '../helpers';
 
 async function login(name: string): Promise<string> {
   const response = await devLogin(apiRequest('/api/auth/dev/login', { body: { name } }));
   return response.headers.get('set-cookie')!.split(';')[0];
 }
 
+/** 建任务（#20：新任务一律落待规划；body 带 column:'todo' 时由夹具代劳移动）。 */
 async function newTask(cookie: string, body: Record<string, unknown>): Promise<number> {
-  const response = await createTaskRoute(apiRequest('/api/tasks', { headers: { cookie }, body }));
-  const parsed = (await response.json()) as { task: { id: number } };
-  return parsed.task.id;
+  const { column, ...rest } = body;
+  return newTaskAt(cookie, rest, column === 'todo' ? 'todo' : 'to_plan');
 }
 
 async function newAgent(ownerMemberId: number, name: string): Promise<string> {
@@ -220,7 +219,8 @@ describe('释放进入活动流时间线（T10 投影）', () => {
     );
     expect(response.status).toBe(200);
     const body = (await response.json()) as { activity: { action: string; actorType: string }[] };
-    expect(body.activity.map((entry) => entry.action)).toEqual(['created', 'claimed', 'released']);
-    expect(body.activity[2]).toMatchObject({ action: 'released', actorType: 'agent' });
+    // moved 是夹具把任务从待规划整理进待办留下的（#20 唯一入口列）
+    expect(body.activity.map((entry) => entry.action)).toEqual(['created', 'moved', 'claimed', 'released']);
+    expect(body.activity[3]).toMatchObject({ action: 'released', actorType: 'agent' });
   });
 });

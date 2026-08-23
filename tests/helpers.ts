@@ -1,5 +1,7 @@
 import { beforeEach } from 'vitest';
 import { sql } from 'drizzle-orm';
+import { POST as createTaskRoute } from '@/app/api/tasks/route';
+import { PATCH as moveTaskRoute } from '@/app/api/tasks/[id]/move/route';
 import { getDb } from '@/db/client';
 
 /**
@@ -53,4 +55,35 @@ export function apiRequest(
     headers,
     body,
   });
+}
+
+/**
+ * 建任务并（可选）移到目标列。#20 后新任务一律落待规划（唯一入口列），
+ * 别的列要经移动接口；body 里若带 column 会被剥掉（避免 400）。
+ */
+export async function newTaskAt(
+  cookie: string,
+  body: Record<string, unknown>,
+  column: 'to_plan' | 'todo' = 'to_plan',
+): Promise<number> {
+  const rest = { ...body };
+  delete rest.column;
+  const created = await createTaskRoute(apiRequest('/api/tasks', { headers: { cookie }, body: rest }));
+  const createdBody = (await created.json()) as { task?: { id: number }; error?: { code: string } };
+  if (!createdBody.task) {
+    throw new Error(`create task failed: ${createdBody.error?.code ?? created.status}`);
+  }
+  const taskId = createdBody.task.id;
+  if (column !== 'to_plan') {
+    const moved = await moveTaskRoute(
+      apiRequest(`/api/tasks/${taskId}/move`, {
+        method: 'PATCH',
+        headers: { cookie },
+        body: { to: column },
+      }),
+      { params: Promise.resolve({ id: String(taskId) }) },
+    );
+    if (!moved.ok) throw new Error(`move task to ${column} failed: ${moved.status}`);
+  }
+  return taskId;
 }

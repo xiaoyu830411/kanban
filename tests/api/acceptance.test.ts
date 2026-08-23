@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { POST as devLogin } from '@/app/api/auth/dev/login/route';
 import { GET as meRoute } from '@/app/api/me/route';
-import { POST as createTaskRoute } from '@/app/api/tasks/route';
 import { POST as memberDodRoute } from '@/app/api/tasks/[id]/dod/route';
 import { PATCH as memberMoveRoute } from '@/app/api/tasks/[id]/move/route';
 import { POST as acceptRoute } from '@/app/api/tasks/[id]/accept/route';
@@ -16,7 +15,7 @@ import { tasks } from '@/db/schema';
 import { createAgent } from '@/server/kernel/agents';
 import { getEventBus } from '@/server/kernel/event-bus';
 import type { DomainEvent } from '@/server/kernel/events';
-import { apiRequest, setupIsolatedDb } from '../helpers';
+import { apiRequest, newTaskAt, setupIsolatedDb } from '../helpers';
 
 async function login(name: string): Promise<string> {
   const response = await devLogin(apiRequest('/api/auth/dev/login', { body: { name } }));
@@ -36,13 +35,10 @@ describe('人工验收门端到端：建任务 → 认领 → 报告 → 待验�
   setupIsolatedDb();
 
   it('全流程闭环可演示', async () => {
-    // 1. 成员建任务 + DoD
+    // 1. 成员建任务（落待规划，再整理进待办）+ DoD
     const cookie = await login('jonas');
     const ownerId = await memberIdOf(cookie);
-    const created = await createTaskRoute(
-      apiRequest('/api/tasks', { headers: { cookie }, body: { title: '打通验收闭环', column: 'todo' } }),
-    );
-    const taskId = ((await created.json()) as { task: { id: number } }).task.id;
+    const taskId = await newTaskAt(cookie, { title: '打通验收闭环' }, 'todo');
 
     const dodIds: number[] = [];
     for (const content of ['实现完整', '测试通过']) {
@@ -125,10 +121,7 @@ describe('验收与退回的协议约束', () => {
   async function inReviewTask() {
     const cookie = await login('jonas');
     const ownerId = await memberIdOf(cookie);
-    const created = await createTaskRoute(
-      apiRequest('/api/tasks', { headers: { cookie }, body: { title: '约束', column: 'todo' } }),
-    );
-    const taskId = ((await created.json()) as { task: { id: number } }).task.id;
+    const taskId = await newTaskAt(cookie, { title: '约束' }, 'todo');
     const { token } = await createAgent(ownerId, 'worker');
     await claimTaskRoute(
       apiRequest(`/api/agent/tasks/${taskId}/claim`, { method: 'POST', headers: bearer(token) }),
@@ -162,10 +155,7 @@ describe('验收与退回的协议约束', () => {
 
   it('非待验收状态 → 409 not_acceptable', async () => {
     const cookie = await login('jonas');
-    const created = await createTaskRoute(
-      apiRequest('/api/tasks', { headers: { cookie }, body: { title: '还在待办', column: 'todo' } }),
-    );
-    const taskId = ((await created.json()) as { task: { id: number } }).task.id;
+    const taskId = await newTaskAt(cookie, { title: '还在待办' }, 'todo');
 
     const response = await acceptRoute(
       apiRequest(`/api/tasks/${taskId}/accept`, { method: 'POST', headers: { cookie } }),

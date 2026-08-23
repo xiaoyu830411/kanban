@@ -18,6 +18,7 @@ export const DOMAIN_EVENT_NAMES = [
   'member.joined',
   'agent.created',
   'task.created',
+  'task.updated',
   'task.moved',
   'task.claimed',
   'task.released',
@@ -34,6 +35,7 @@ export interface DomainEventMap {
   'member.joined': { memberId: number; name: string; isAdmin: boolean };
   'agent.created': { agentId: number; ownerId: number; name: string };
   'task.created': { taskId: number; workspaceId: number; column: BoardColumn; actor: Actor };
+  'task.updated': { taskId: number; workspaceId: number; column: BoardColumn; actor: Actor };
   'task.moved': { taskId: number; from: BoardColumn; to: BoardColumn; actor: Actor };
   'task.claimed': { taskId: number; from: BoardColumn; to: BoardColumn; actor: Actor };
   'task.released': { taskId: number; actor: Actor };

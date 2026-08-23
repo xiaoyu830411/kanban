@@ -8,7 +8,6 @@ import {
   type BoardColumn,
 } from '@/server/kernel/board-columns';
 import {
-  TASK_ENTRY_COLUMNS,
   TASK_EXECUTION_TYPES,
   TASK_EXECUTION_TYPE_LABELS,
   TASK_PRIORITIES,
@@ -345,7 +344,6 @@ function CreateTaskForm({ onDone }: { onDone: () => Promise<void> | void }) {
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState<TaskPriority>('medium');
   const [labels, setLabels] = useState('');
-  const [column, setColumn] = useState<(typeof TASK_ENTRY_COLUMNS)[number]>('to_plan');
   const [executionType, setExecutionType] = useState<TaskExecutionType>('tmp');
   const [executionTarget, setExecutionTarget] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -367,7 +365,6 @@ function CreateTaskForm({ onDone }: { onDone: () => Promise<void> | void }) {
             .split(/[,，]/)
             .map((label) => label.trim())
             .filter(Boolean),
-          column,
           executionType,
           ...(executionType !== 'tmp' ? { executionTarget } : {}),
         }),
@@ -426,20 +423,6 @@ function CreateTaskForm({ onDone }: { onDone: () => Promise<void> | void }) {
           placeholder="bug, v1"
           className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm"
         />
-      </label>
-      <label className="flex flex-col gap-1 text-sm">
-        初始列
-        <select
-          value={column}
-          onChange={(event) => setColumn(event.target.value as (typeof TASK_ENTRY_COLUMNS)[number])}
-          className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm"
-        >
-          {TASK_ENTRY_COLUMNS.map((value) => (
-            <option key={value} value={value}>
-              {BOARD_COLUMN_LABELS[value]}
-            </option>
-          ))}
-        </select>
       </label>
       <label className="flex flex-col gap-1 text-sm">
         执行目录

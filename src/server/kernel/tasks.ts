@@ -100,6 +100,49 @@ export async function requireOwnTask(memberId: number, taskId: number): Promise<
 
 // ---- 命令 ----
 
+/**
+ * 执行目录三元组校验（创建/编辑共用，CONTEXT.md「执行目录」「起始分支」）：
+ * tmp 恒空；dir/repo 必填 target；起始分支可选 ≤200。不做存在性校验——
+ * 创建不校验、执行时报错是启动器职责（T15 共识）。
+ */
+function normalizeExecution(
+  executionType: unknown,
+  executionTarget: unknown,
+  executionRef: unknown,
+): { executionType: TaskExecutionType; executionTarget: string | null; executionRef: string | null } {
+  if (!(TASK_EXECUTION_TYPES as readonly string[]).includes(executionType as string)) {
+    throw new ProtocolError(
+      400,
+      'invalid_execution_type',
+      `executionType must be one of ${TASK_EXECUTION_TYPES.join(', ')}`,
+    );
+  }
+  let target: string | null = null;
+  if (executionType !== 'tmp') {
+    const trimmed = typeof executionTarget === 'string' ? executionTarget.trim() : '';
+    if (trimmed.length === 0) {
+      throw new ProtocolError(
+        400,
+        'invalid_execution_target',
+        `executionTarget is required when executionType is "${executionType}"`,
+      );
+    }
+    if (trimmed.length > 500) {
+      throw new ProtocolError(400, 'invalid_execution_target', 'executionTarget must be at most 500 characters');
+    }
+    target = trimmed;
+  }
+  let ref: string | null = null;
+  if (executionType !== 'tmp') {
+    const trimmedRef = typeof executionRef === 'string' ? executionRef.trim() : '';
+    if (trimmedRef.length > 200) {
+      throw new ProtocolError(400, 'invalid_execution_ref', 'executionRef must be at most 200 characters');
+    }
+    ref = trimmedRef.length === 0 ? null : trimmedRef;
+  }
+  return { executionType: executionType as TaskExecutionType, executionTarget: target, executionRef: ref };
+}
+
 export interface CreateTaskInput {
   title: string;
   description?: string;
@@ -152,54 +195,90 @@ export function validateCreateTaskInput(input: {
     throw new ProtocolError(
       400,
       'invalid_column',
-      `new tasks must start in one of ${TASK_ENTRY_COLUMNS.join(', ')}`,
+      `new tasks must start in ${TASK_ENTRY_COLUMNS.join(', ')} (to_plan is the only entry column)`,
     );
   }
   // 执行目录（CONTEXT.md）：三型；dir/repo 必填 target，tmp 恒 NULL（传了也归一）。
   // 创建时不做存在性校验——执行时校验属启动器职责（T15）。
-  const executionType = input.executionType ?? 'tmp';
-  if (!(TASK_EXECUTION_TYPES as readonly string[]).includes(executionType as string)) {
-    throw new ProtocolError(
-      400,
-      'invalid_execution_type',
-      `executionType must be one of ${TASK_EXECUTION_TYPES.join(', ')}`,
-    );
-  }
-  let executionTarget: string | null = null;
-  if (executionType !== 'tmp') {
-    const target = typeof input.executionTarget === 'string' ? input.executionTarget.trim() : '';
-    if (target.length === 0) {
-      throw new ProtocolError(
-        400,
-        'invalid_execution_target',
-        `executionTarget is required when executionType is "${executionType}"`,
-      );
-    }
-    if (target.length > 500) {
-      throw new ProtocolError(400, 'invalid_execution_target', 'executionTarget must be at most 500 characters');
-    }
-    executionTarget = target;
-  }
-  // 起始分支（CONTEXT.md）：仅 dir/repo 有意义，可选；tmp 归一为 NULL。
-  // 同样不做存在性校验——分支不存在在启动时报（启动器职责）。
-  let executionRef: string | null = null;
-  if (executionType !== 'tmp') {
-    const ref = typeof input.executionRef === 'string' ? input.executionRef.trim() : '';
-    if (ref.length > 200) {
-      throw new ProtocolError(400, 'invalid_execution_ref', 'executionRef must be at most 200 characters');
-    }
-    executionRef = ref.length === 0 ? null : ref;
-  }
+  const execution = normalizeExecution(input.executionType ?? 'tmp', input.executionTarget, input.executionRef);
   return {
     title,
     description,
     priority: priority as TaskPriority,
     labels,
     column: column as TaskEntryColumn,
-    executionType: executionType as TaskExecutionType,
-    executionTarget,
-    executionRef,
+    ...execution,
   };
+}
+
+/** 编辑可改字段（CONTEXT.md「编辑」）：id/列/持有/指派不在其中（列走移动，指派走指派接口）。 */
+export type EditableField =
+  | 'title'
+  | 'description'
+  | 'priority'
+  | 'labels'
+  | 'executionType'
+  | 'executionTarget'
+  | 'executionRef';
+export type UpdateTaskInput = Partial<Pick<CreateTaskInput, EditableField>>;
+
+/**
+ * 校验部分更新输入：只认可编辑字段（列出现在 body 里直接拒绝——列不是字段，
+ * 是状态，走移动接口）；至少一个可编辑字段；执行目录三元组按「合并后」的有效值校验
+ * （如 tmp→dir 必须同时给 target）。
+ */
+export function validateUpdateTaskInput(
+  input: Record<string, unknown>,
+  current: Task,
+): UpdateTaskInput {
+  if (input.column !== undefined) {
+    throw new ProtocolError(400, 'invalid_column', 'column is not editable; use the move endpoint');
+  }
+  const patch: UpdateTaskInput = {};
+  if (input.title !== undefined) {
+    const title = typeof input.title === 'string' ? input.title.trim() : '';
+    if (title.length === 0) throw new ProtocolError(400, 'invalid_title', 'title is required');
+    if (title.length > 200) {
+      throw new ProtocolError(400, 'invalid_title', 'title must be at most 200 characters');
+    }
+    patch.title = title;
+  }
+  if (input.description !== undefined) {
+    if (typeof input.description !== 'string') {
+      throw new ProtocolError(400, 'invalid_description', 'description must be a string');
+    }
+    patch.description = input.description;
+  }
+  if (input.priority !== undefined) {
+    if (!TASK_PRIORITIES.includes(input.priority as TaskPriority)) {
+      throw new ProtocolError(400, 'invalid_priority', `priority must be one of ${TASK_PRIORITIES.join(', ')}`);
+    }
+    patch.priority = input.priority as TaskPriority;
+  }
+  if (input.labels !== undefined) {
+    if (!Array.isArray(input.labels)) {
+      throw new ProtocolError(400, 'invalid_labels', 'labels must be an array of strings');
+    }
+    patch.labels = input.labels.map((label) => String(label).trim()).filter((label) => label.length > 0);
+  }
+  const hasType = input.executionType !== undefined;
+  const hasTarget = input.executionTarget !== undefined;
+  const hasRef = input.executionRef !== undefined;
+  if (hasType || hasTarget || hasRef) {
+    // 显式 null/'' 与「未提供」必须区分：前者是清空起始分支，后者沿用现值
+    const effective = normalizeExecution(
+      hasType ? input.executionType : current.executionType,
+      hasTarget ? input.executionTarget : current.executionTarget,
+      hasRef ? input.executionRef : current.executionRef,
+    );
+    patch.executionType = effective.executionType;
+    patch.executionTarget = effective.executionTarget;
+    patch.executionRef = effective.executionRef;
+  }
+  if (Object.keys(patch).length === 0) {
+    throw new ProtocolError(400, 'empty_update', 'at least one editable field is required');
+  }
+  return patch;
 }
 
 export async function createTask(input: CreateTaskInput, context: CreateTaskContext): Promise<Task> {
@@ -254,6 +333,38 @@ export async function applyMove(taskId: number, to: BoardColumn): Promise<Task> 
     .set({ column: to, updatedAt: new Date() })
     .where(eq(tasks.id, taskId));
   return getTaskById(taskId);
+}
+
+/**
+ * 成员编辑任务字段（CONTEXT.md「编辑」，成员专属）：待规划/待办/待验收可改；
+ * 被 Agent 持有 → 409（防执行中改需求污染会话）；已完成只读。
+ * 列不是字段——走移动接口；指派走指派接口。
+ */
+export async function updateTaskAsMember(
+  memberId: number,
+  taskId: number,
+  input: Record<string, unknown>,
+): Promise<Task> {
+  const task = await requireOwnTask(memberId, taskId);
+  if (task.heldByAgentId !== null) {
+    throw new ProtocolError(409, 'task_held', 'task is held by an agent and cannot be edited');
+  }
+  if (task.column === 'done') {
+    throw new ProtocolError(409, 'task_readonly', 'task in "done" is read-only');
+  }
+  const patch = validateUpdateTaskInput(input, task);
+  await getDb()
+    .update(tasks)
+    .set({ ...patch, updatedAt: new Date() })
+    .where(eq(tasks.id, taskId));
+  const updated = await getTaskById(taskId);
+  await getEventBus().publish('task.updated', {
+    taskId: updated.id,
+    workspaceId: updated.workspaceId,
+    column: updated.column,
+    actor: { type: 'member', id: memberId },
+  });
+  return updated;
 }
 
 // ---- Agent 认领协议（T7，ADR-0002：看板不管理进程，Agent 主动 pull） ----

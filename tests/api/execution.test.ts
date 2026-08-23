@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { POST as devLogin } from '@/app/api/auth/dev/login/route';
 import { GET as meRoute } from '@/app/api/me/route';
-import { POST as createTaskRoute } from '@/app/api/tasks/route';
 import { POST as createAgentTaskRoute } from '@/app/api/agent/tasks/route';
 import { GET as agentTaskDetail } from '@/app/api/agent/tasks/[id]/route';
 import { POST as claimTaskRoute } from '@/app/api/agent/tasks/[id]/claim/route';
@@ -20,7 +19,7 @@ import { taskComments, taskDodItems, tasks, workspaces } from '@/db/schema';
 import { createAgent } from '@/server/kernel/agents';
 import { getEventBus } from '@/server/kernel/event-bus';
 import type { DomainEvent } from '@/server/kernel/events';
-import { apiRequest, setupIsolatedDb } from '../helpers';
+import { apiRequest, newTaskAt, setupIsolatedDb } from '../helpers';
 
 async function login(name: string): Promise<string> {
   const response = await devLogin(apiRequest('/api/auth/dev/login', { body: { name } }));
@@ -32,9 +31,10 @@ async function memberId(cookie: string): Promise<number> {
   return ((await response.json()) as { member: { id: number } }).member.id;
 }
 
+/** 建任务（#20：新任务一律落待规划；body 带 column:'todo' 时由夹具代劳移动）。 */
 async function newTask(cookie: string, body: Record<string, unknown>): Promise<number> {
-  const response = await createTaskRoute(apiRequest('/api/tasks', { headers: { cookie }, body }));
-  return ((await response.json()) as { task: { id: number } }).task.id;
+  const { column, ...rest } = body;
+  return newTaskAt(cookie, rest, column === 'todo' ? 'todo' : 'to_plan');
 }
 
 const bearer = (token: string) => ({ authorization: `Bearer ${token}` });

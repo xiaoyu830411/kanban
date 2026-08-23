@@ -11,7 +11,7 @@ import { POST as commentRoute } from '@/app/api/tasks/[id]/comments/route';
 import { getEventBus } from '@/server/kernel/event-bus';
 import type { DomainEvent } from '@/server/kernel/events';
 import { createAgent as createAgentByKernel } from '@/server/kernel/agents';
-import { apiRequest, setupIsolatedDb } from '../helpers';
+import { apiRequest, newTaskAt, setupIsolatedDb } from '../helpers';
 
 async function login(name: string): Promise<string> {
   const response = await devLogin(apiRequest('/api/auth/dev/login', { body: { name } }));
@@ -37,7 +37,7 @@ function taskPath(id: number, suffix = ''): string {
 describe('成员建任务（POST /api/tasks）', () => {
   setupIsolatedDb();
 
-  it('新任务可落待规划或待办，字段齐备', async () => {
+  it('新任务一律落待规划（唯一入口列），字段齐备', async () => {
     const cookie = await login('jonas');
 
     const planned = await createTask(cookie, {
@@ -54,8 +54,10 @@ describe('成员建任务（POST /api/tasks）', () => {
       labels: ['需求', 'v1'],
     });
 
+    // 入口已收窄（#20）：连待办也不能直接建，只能建后再移
     const todo = await createTask(cookie, { title: '开工', column: 'todo' });
-    expect(todo.task).toMatchObject({ column: 'todo', priority: 'medium', labels: [] });
+    expect(todo.response.status).toBe(400);
+    expect(todo.error?.code).toBe('invalid_column');
 
     // 落库可读回
     const rows = await getDb().select().from(tasks).where(eq(tasks.id, planned.task!.id));
@@ -107,11 +109,11 @@ describe('成员整理看板（PATCH /api/tasks/:id/move）', () => {
 
   it('成员侧矩阵之外的移动被明确拒绝（403 forbidden_transition）', async () => {
     const cookie = await login('jonas');
-    const { task } = await createTask(cookie, { title: '任务B', column: 'todo' });
+    const taskId = await newTaskAt(cookie, { title: '任务B' }, 'todo');
 
     const response = await moveTaskRoute(
-      apiRequest(taskPath(task!.id, '/move'), { method: 'PATCH', headers: { cookie }, body: { to: 'in_progress' } }),
-      { params: Promise.resolve({ id: String(task!.id) }) },
+      apiRequest(taskPath(taskId, '/move'), { method: 'PATCH', headers: { cookie }, body: { to: 'in_progress' } }),
+      { params: Promise.resolve({ id: String(taskId) }) },
     );
     expect(response.status).toBe(403);
     const body = (await response.json()) as { error: { code: string; message: string } };
@@ -119,7 +121,7 @@ describe('成员整理看板（PATCH /api/tasks/:id/move）', () => {
     expect(body.error.message).toContain('member cannot move task');
 
     // 状态未变
-    const rows = await getDb().select().from(tasks).where(eq(tasks.id, task!.id));
+    const rows = await getDb().select().from(tasks).where(eq(tasks.id, taskId));
     expect(rows[0].column).toBe('todo');
   });
 
@@ -141,7 +143,7 @@ describe('筛选（GET /api/tasks）', () => {
   it('按列 / 优先级 / 标签筛选生效', async () => {
     const cookie = await login('jonas');
     await createTask(cookie, { title: 'p-low', priority: 'low', labels: ['bug'] });
-    await createTask(cookie, { title: 'p-high-todo', priority: 'high', labels: ['bug', 'v1'], column: 'todo' });
+    await newTaskAt(cookie, { title: 'p-high-todo', priority: 'high', labels: ['bug', 'v1'] }, 'todo');
     await createTask(cookie, { title: 'p-high-plan', priority: 'high', labels: ['feature'] });
 
     const byColumn = await listTasksRoute(
@@ -287,10 +289,10 @@ describe('任务领域事件', () => {
 
     try {
       const cookie = await login('jonas');
-      const { task } = await createTask(cookie, { title: '事件任务', column: 'todo' });
+      const taskId = await newTaskAt(cookie, { title: '事件任务' });
       await moveTaskRoute(
-        apiRequest(taskPath(task!.id, '/move'), { method: 'PATCH', headers: { cookie }, body: { to: 'to_plan' } }),
-        { params: Promise.resolve({ id: String(task!.id) }) },
+        apiRequest(taskPath(taskId, '/move'), { method: 'PATCH', headers: { cookie }, body: { to: 'todo' } }),
+        { params: Promise.resolve({ id: String(taskId) }) },
       );
     } finally {
       offCreated();
@@ -298,8 +300,8 @@ describe('任务领域事件', () => {
     }
 
     expect(created).toHaveLength(1);
-    expect(created[0].payload).toMatchObject({ column: 'todo', actor: { type: 'member' } });
+    expect(created[0].payload).toMatchObject({ column: 'to_plan', actor: { type: 'member' } });
     expect(moved).toHaveLength(1);
-    expect(moved[0].payload).toMatchObject({ from: 'todo', to: 'to_plan' });
+    expect(moved[0].payload).toMatchObject({ from: 'to_plan', to: 'todo' });
   });
 });

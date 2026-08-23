@@ -53,6 +53,55 @@ export async function addDodItem(memberId: number, taskId: number, content: stri
   return rows[0];
 }
 
+/** 校验 DoD 项内容（定义/编辑共用口径）。 */
+function normalizeDodContent(content: unknown): string {
+  const trimmed = typeof content === 'string' ? content.trim() : '';
+  if (trimmed.length === 0) {
+    throw new ProtocolError(400, 'invalid_content', 'DoD item content is required');
+  }
+  if (trimmed.length > 500) {
+    throw new ProtocolError(400, 'invalid_content', 'DoD item content must be at most 500 characters');
+  }
+  return trimmed;
+}
+
+/**
+ * 取可编辑的 DoD 项：被勾选留痕（checkedAt）的项锁死——勾选记录是验收依据
+ * （ADR-0001 信任模型），锁的是「记录」不是「任务定义」；未勾项仍是成员的定义自由。
+ */
+async function requireEditableDodItem(memberId: number, taskId: number, itemId: number): Promise<TaskDodItem> {
+  await requireOwnTask(memberId, taskId);
+  const rows = await getDb().select().from(taskDodItems).where(eq(taskDodItems.id, itemId)).limit(1);
+  const item = rows[0];
+  if (!item || item.taskId !== taskId) {
+    throw new ProtocolError(404, 'dod_item_not_found', `DoD item ${itemId} not found`);
+  }
+  if (item.checkedAt !== null) {
+    throw new ProtocolError(409, 'dod_item_locked', 'checked DoD items are acceptance records and cannot be edited or deleted');
+  }
+  return item;
+}
+
+/** 成员改未勾选项文本。 */
+export async function updateDodItem(
+  memberId: number,
+  taskId: number,
+  itemId: number,
+  content: unknown,
+): Promise<TaskDodItem> {
+  await requireEditableDodItem(memberId, taskId, itemId);
+  const trimmed = normalizeDodContent(content);
+  await getDb().update(taskDodItems).set({ content: trimmed }).where(eq(taskDodItems.id, itemId));
+  const rows = await getDb().select().from(taskDodItems).where(eq(taskDodItems.id, itemId)).limit(1);
+  return rows[0];
+}
+
+/** 成员删未勾选项（连位置不重排——间隙无害，顺序仍按 position 升序）。 */
+export async function deleteDodItem(memberId: number, taskId: number, itemId: number): Promise<void> {
+  await requireEditableDodItem(memberId, taskId, itemId);
+  await getDb().delete(taskDodItems).where(eq(taskDodItems.id, itemId));
+}
+
 /** 勾选 DoD 项并附证据：成员（属主）或持有该任务的 Agent。可重复勾选以更新证据。 */
 export async function checkDodItem(
   actor: Actor,

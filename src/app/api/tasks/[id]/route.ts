@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { handleRoute, requireMember } from '@/server/http';
-import { deleteTaskAsMember, requireOwnTask, toPublicTask } from '@/server/kernel/tasks';
+import { handleRoute, parseJsonBody, requireMember } from '@/server/http';
+import { deleteTaskAsMember, requireOwnTask, toPublicTask, updateTaskAsMember } from '@/server/kernel/tasks';
 import { listDodItems, toPublicDodItem } from '@/server/kernel/dod';
 import { listTaskComments, toPublicComment } from '@/server/kernel/comments';
 
@@ -23,6 +23,17 @@ export async function GET(request: Request, context: RouteContext) {
       dod: dod.map(toPublicDodItem),
       comments: comments.map(toPublicComment),
     });
+  });
+}
+
+/** 成员编辑任务字段（#20）：待规划/待办/待验收；被持有 409；已完成只读；列走移动接口。 */
+export async function PATCH(request: Request, context: RouteContext) {
+  return handleRoute(async () => {
+    const member = await requireMember(request);
+    const { id } = await context.params;
+    const body = await parseJsonBody(request);
+    const task = await updateTaskAsMember(member.id, Number(id), body);
+    return NextResponse.json({ task: toPublicTask(task) });
   });
 }
 

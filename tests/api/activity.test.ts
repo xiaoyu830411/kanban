@@ -1,7 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { POST as devLogin } from '@/app/api/auth/dev/login/route';
 import { GET as meRoute } from '@/app/api/me/route';
-import { POST as createTaskRoute } from '@/app/api/tasks/route';
 import { GET as activityRoute } from '@/app/api/tasks/[id]/activity/route';
 import { POST as claimTaskRoute } from '@/app/api/agent/tasks/[id]/claim/route';
 import { PATCH as agentMoveRoute } from '@/app/api/agent/tasks/[id]/move/route';
@@ -10,7 +9,7 @@ import { POST as agentCommentRoute } from '@/app/api/agent/tasks/[id]/comments/r
 import { POST as acceptRoute } from '@/app/api/tasks/[id]/accept/route';
 import { createAgent } from '@/server/kernel/agents';
 import { bootstrap } from '@/server/bootstrap';
-import { apiRequest, setupIsolatedDb } from '../helpers';
+import { apiRequest, newTaskAt, setupIsolatedDb } from '../helpers';
 
 // 活动流是插件：先装载插件宿主（真实组合根），再经 API 触发事件流
 beforeAll(async () => {
@@ -33,11 +32,8 @@ describe('活动流插件（事件 → 时间线投影）', () => {
     const meResponse = await meRoute(apiRequest('/api/me', { headers: { cookie } }));
     const ownerId = ((await meResponse.json()) as { member: { id: number } }).member.id;
 
-    // 创建（member）→ 认领（agent）→ 报告 → 评论 → 请求验收 → 验收（member）
-    const created = await createTaskRoute(
-      apiRequest('/api/tasks', { headers: { cookie }, body: { title: '有故事的任务', column: 'todo' } }),
-    );
-    const taskId = ((await created.json()) as { task: { id: number } }).task.id;
+    // 创建（member）→ 整理进待办（member）→ 认领（agent）→ 报告 → 评论 → 请求验收 → 验收（member）
+    const taskId = await newTaskAt(cookie, { title: '有故事的任务' }, 'todo');
 
     const { token } = await createAgent(ownerId, 'storyteller');
     await claimTaskRoute(
@@ -86,17 +82,20 @@ describe('活动流插件（事件 → 时间线投影）', () => {
     // 按时间排序，动作序列完整，操作者正确
     expect(body.activity.map((entry) => entry.action)).toEqual([
       'created',
+      'moved', // 待规划 → 待办（成员整理，#20 唯一入口列的必然一步）
       'claimed',
       'reported',
       'commented',
-      'moved',
+      'moved', // 进行中 → 待验收（Agent 请求验收）
       'accepted',
     ]);
     expect(body.activity[0]).toMatchObject({ actorType: 'member', actorName: 'jonas' });
-    expect(body.activity[1]).toMatchObject({ actorType: 'agent', actorName: 'storyteller' });
-    expect(body.activity[2].detail.changedFiles).toEqual(['src/x.ts']);
-    expect(body.activity[4].detail).toMatchObject({ from: 'in_progress', to: 'in_review' });
-    expect(body.activity[5]).toMatchObject({ actorType: 'member' });
+    expect(body.activity[1]).toMatchObject({ actorType: 'member' });
+    expect(body.activity[1].detail).toMatchObject({ from: 'to_plan', to: 'todo' });
+    expect(body.activity[2]).toMatchObject({ actorType: 'agent', actorName: 'storyteller' });
+    expect(body.activity[3].detail.changedFiles).toEqual(['src/x.ts']);
+    expect(body.activity[5].detail).toMatchObject({ from: 'in_progress', to: 'in_review' });
+    expect(body.activity[6]).toMatchObject({ actorType: 'member' });
 
     // 时间单调不减
     const times = body.activity.map((entry) => Date.parse(entry.occurredAt));
@@ -109,10 +108,7 @@ describe('活动流插件（事件 → 时间线投影）', () => {
     const ownerId = ((await meResponse.json()) as { member: { id: number } }).member.id;
     await createAgent(ownerId, 'quiet-agent'); // agent.created：不投影
 
-    const created = await createTaskRoute(
-      apiRequest('/api/tasks', { headers: { cookie }, body: { title: '只有创建' } }),
-    );
-    const taskId = ((await created.json()) as { task: { id: number } }).task.id;
+    const taskId = await newTaskAt(cookie, { title: '只有创建' });
 
     const response = await activityRoute(
       apiRequest(`/api/tasks/${taskId}/activity`, { headers: { cookie } }),
@@ -125,10 +121,7 @@ describe('活动流插件（事件 → 时间线投影）', () => {
   it('他人的任务时间线 → 404；未认证 → 401', async () => {
     const jonas = await login('jonas');
     const xiaoyu = await login('xiaoyu');
-    const created = await createTaskRoute(
-      apiRequest('/api/tasks', { headers: { cookie: jonas }, body: { title: '私有' } }),
-    );
-    const taskId = ((await created.json()) as { task: { id: number } }).task.id;
+    const taskId = await newTaskAt(jonas, { title: '私有' });
 
     const forbidden = await activityRoute(
       apiRequest(`/api/tasks/${taskId}/activity`, { headers: { cookie: xiaoyu } }),
