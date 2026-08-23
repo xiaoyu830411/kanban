@@ -9,8 +9,11 @@ import {
 } from '@/server/kernel/board-columns';
 import {
   TASK_ENTRY_COLUMNS,
+  TASK_EXECUTION_TYPES,
+  TASK_EXECUTION_TYPE_LABELS,
   TASK_PRIORITIES,
   TASK_PRIORITY_LABELS,
+  type TaskExecutionType,
   type TaskPriority,
 } from '@/server/kernel/task-meta';
 
@@ -22,6 +25,8 @@ export interface BoardTask {
   labels: string[];
   column: BoardColumn;
   assigneeAgentId: number | null;
+  executionType: TaskExecutionType;
+  executionTarget: string | null;
   heldByAgentId: number | null;
 }
 
@@ -250,6 +255,8 @@ function CreateTaskForm({ onDone }: { onDone: () => Promise<void> | void }) {
   const [priority, setPriority] = useState<TaskPriority>('medium');
   const [labels, setLabels] = useState('');
   const [column, setColumn] = useState<(typeof TASK_ENTRY_COLUMNS)[number]>('to_plan');
+  const [executionType, setExecutionType] = useState<TaskExecutionType>('tmp');
+  const [executionTarget, setExecutionTarget] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -270,6 +277,8 @@ function CreateTaskForm({ onDone }: { onDone: () => Promise<void> | void }) {
             .map((label) => label.trim())
             .filter(Boolean),
           column,
+          executionType,
+          ...(executionType !== 'tmp' ? { executionTarget } : {}),
         }),
       });
       if (!response.ok) {
@@ -341,6 +350,33 @@ function CreateTaskForm({ onDone }: { onDone: () => Promise<void> | void }) {
           ))}
         </select>
       </label>
+      <label className="flex flex-col gap-1 text-sm">
+        执行目录
+        <select
+          value={executionType}
+          onChange={(event) => setExecutionType(event.target.value as TaskExecutionType)}
+          className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm"
+        >
+          {TASK_EXECUTION_TYPES.map((value) => (
+            <option key={value} value={value}>
+              {TASK_EXECUTION_TYPE_LABELS[value]}
+            </option>
+          ))}
+        </select>
+      </label>
+      {executionType !== 'tmp' && (
+        <label className="flex flex-col gap-1 text-sm md:col-span-2">
+          {executionType === 'dir' ? '目录路径' : '仓库地址（本地路径或远端 URL）'}
+          <input
+            value={executionTarget}
+            onChange={(event) => setExecutionTarget(event.target.value)}
+            required
+            maxLength={500}
+            placeholder={executionType === 'dir' ? '/Users/you/Projects/foo' : 'git@github.com:acme/foo.git'}
+            className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm"
+          />
+        </label>
+      )}
       <div className="flex items-end">
         <button
           type="submit"

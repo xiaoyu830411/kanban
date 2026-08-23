@@ -1,9 +1,9 @@
 import { mysqlTable, varchar, timestamp, int, mysqlEnum, json, text, boolean } from 'drizzle-orm/mysql-core';
 import { BOARD_COLUMNS } from '@/server/kernel/board-columns';
-import { TASK_PRIORITIES } from '@/server/kernel/task-meta';
+import { TASK_EXECUTION_TYPES, TASK_PRIORITIES } from '@/server/kernel/task-meta';
 
-export { TASK_PRIORITIES };
-export type { TaskPriority } from '@/server/kernel/task-meta';
+export { TASK_PRIORITIES, TASK_EXECUTION_TYPES };
+export type { TaskPriority, TaskExecutionType } from '@/server/kernel/task-meta';
 
 /**
  * Schema lives in the kernel's ownership: core domain tables (members, workspaces,
@@ -61,6 +61,12 @@ export const tasks = mysqlTable('tasks', {
   column: mysqlEnum('column', [...BOARD_COLUMNS]).notNull().default('to_plan'),
   /** 指派（Assign）：可选；指派后仅该 Agent 可认领。 */
   assigneeAgentId: int('assignee_agent_id').references(() => agents.id),
+  /** 执行目录三型（CONTEXT.md「执行目录」，T14）。 */
+  executionType: mysqlEnum('execution_type', [...TASK_EXECUTION_TYPES])
+    .notNull()
+    .default('tmp'),
+  /** 执行目录目标：dir=绝对路径、repo=本地路径或远端 URL；tmp 恒 NULL。 */
+  executionTarget: varchar('execution_target', { length: 500 }),
   /** 认领后的独占持有者。 */
   heldByAgentId: int('held_by_agent_id').references(() => agents.id),
   createdById: int('created_by_id')

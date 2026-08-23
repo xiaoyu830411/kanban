@@ -15,15 +15,18 @@ import type { Actor } from './events';
 import { ProtocolError } from './protocol';
 import {
   TASK_ENTRY_COLUMNS,
+  TASK_EXECUTION_TYPES,
   TASK_PRIORITIES,
   TASK_PRIORITY_LABELS,
   type TaskEntryColumn,
+  type TaskExecutionType,
   type TaskPriority,
 } from './task-meta';
 import { ensureMySpace } from './workspaces';
 
 export { TASK_ENTRY_COLUMNS, TASK_PRIORITY_LABELS };
 export type { TaskEntryColumn, TaskPriority };
+export type { TaskExecutionType } from './task-meta';
 
 /**
  * 泛化移列矩阵（认领 / 验收 / 退回是带语义的专用动作，见 claim/accept/reject）。
@@ -103,6 +106,8 @@ export interface CreateTaskInput {
   priority?: TaskPriority;
   labels?: string[];
   column?: TaskEntryColumn;
+  executionType?: TaskExecutionType;
+  executionTarget?: string | null;
 }
 
 export interface CreateTaskContext {
@@ -118,6 +123,8 @@ export function validateCreateTaskInput(input: {
   priority?: unknown;
   labels?: unknown;
   column?: unknown;
+  executionType?: unknown;
+  executionTarget?: unknown;
 }): CreateTaskInput {
   const title = typeof input.title === 'string' ? input.title.trim() : '';
   if (title.length === 0) throw new ProtocolError(400, 'invalid_title', 'title is required');
@@ -146,7 +153,40 @@ export function validateCreateTaskInput(input: {
       `new tasks must start in one of ${TASK_ENTRY_COLUMNS.join(', ')}`,
     );
   }
-  return { title, description, priority: priority as TaskPriority, labels, column: column as TaskEntryColumn };
+  // 执行目录（CONTEXT.md）：三型；dir/repo 必填 target，tmp 恒 NULL（传了也归一）。
+  // 创建时不做存在性校验——执行时校验属启动器职责（T15）。
+  const executionType = input.executionType ?? 'tmp';
+  if (!(TASK_EXECUTION_TYPES as readonly string[]).includes(executionType as string)) {
+    throw new ProtocolError(
+      400,
+      'invalid_execution_type',
+      `executionType must be one of ${TASK_EXECUTION_TYPES.join(', ')}`,
+    );
+  }
+  let executionTarget: string | null = null;
+  if (executionType !== 'tmp') {
+    const target = typeof input.executionTarget === 'string' ? input.executionTarget.trim() : '';
+    if (target.length === 0) {
+      throw new ProtocolError(
+        400,
+        'invalid_execution_target',
+        `executionTarget is required when executionType is "${executionType}"`,
+      );
+    }
+    if (target.length > 500) {
+      throw new ProtocolError(400, 'invalid_execution_target', 'executionTarget must be at most 500 characters');
+    }
+    executionTarget = target;
+  }
+  return {
+    title,
+    description,
+    priority: priority as TaskPriority,
+    labels,
+    column: column as TaskEntryColumn,
+    executionType: executionType as TaskExecutionType,
+    executionTarget,
+  };
 }
 
 export async function createTask(input: CreateTaskInput, context: CreateTaskContext): Promise<Task> {
@@ -160,6 +200,8 @@ export async function createTask(input: CreateTaskInput, context: CreateTaskCont
       priority: input.priority ?? 'medium',
       labels: input.labels ?? [],
       column: input.column ?? 'to_plan',
+      executionType: input.executionType ?? 'tmp',
+      executionTarget: input.executionTarget ?? null,
       createdById: context.ownerId,
     })
     .$returningId();
@@ -411,6 +453,8 @@ export function toPublicTask(task: Task): {
   labels: string[];
   column: BoardColumn;
   assigneeAgentId: number | null;
+  executionType: TaskExecutionType;
+  executionTarget: string | null;
   heldByAgentId: number | null;
   createdAt: string;
   updatedAt: string;
@@ -424,6 +468,8 @@ export function toPublicTask(task: Task): {
     labels: task.labels,
     column: task.column,
     assigneeAgentId: task.assigneeAgentId,
+    executionType: task.executionType,
+    executionTarget: task.executionTarget,
     heldByAgentId: task.heldByAgentId,
     createdAt: task.createdAt.toISOString(),
     updatedAt: task.updatedAt.toISOString(),

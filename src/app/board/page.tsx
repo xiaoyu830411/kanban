@@ -48,6 +48,8 @@ export default async function BoardPage() {
             labels: task.labels,
             column: task.column,
             assigneeAgentId: task.assigneeAgentId,
+            executionType: task.executionType,
+            executionTarget: task.executionTarget,
             heldByAgentId: task.heldByAgentId,
           }))}
         />
