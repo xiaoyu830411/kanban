@@ -11,10 +11,13 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
-const configIndex = process.argv.indexOf('--mcp-config');
+const rest = process.argv.slice(2);
+const configIndex = rest.indexOf('--mcp-config');
 if (configIndex === -1) throw new Error('missing --mcp-config');
-const server = JSON.parse(readFileSync(process.argv[configIndex + 1], 'utf8')).mcpServers.taskboard;
-const prompt = process.argv[process.argv.length - 1];
+const configPath = rest[configIndex + 1];
+const server = JSON.parse(readFileSync(configPath, 'utf8')).mcpServers.taskboard;
+// prompt 是首个非选项、非 --mcp-config 取值的参数（真实脚本里它排在 --mcp-config 之前）
+const prompt = rest.find((arg, index) => !arg.startsWith('-') && rest[index - 1] !== '--mcp-config');
 const taskId = Number(prompt.match(/#(\d+)/)?.[1]);
 if (!Number.isInteger(taskId)) throw new Error(`cannot parse taskId from prompt: ${prompt}`);
 

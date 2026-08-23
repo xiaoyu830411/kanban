@@ -187,6 +187,20 @@ function sq(value) {
   return `'${String(value).replace(/'/g, "'\\''")}'`;
 }
 
+/** 在启动器进程 PATH 中解析可执行文件绝对路径（Terminal 登录 shell PATH 可能不同）。 */
+function resolveOnPath(bin) {
+  for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
+    if (!dir) continue;
+    const candidate = path.join(dir, bin);
+    try {
+      if (existsSync(candidate)) return candidate;
+    } catch {
+      // 单个目录不可读不影响继续找
+    }
+  }
+  return null;
+}
+
 export function buildPrompt(task) {
   return [
     `你已持有看板任务 #${task.id}「${task.title}」的执行权，请完成一次完整执行：`,
@@ -255,17 +269,30 @@ export async function launchTask(taskId, { client, config, spawnTerminal = spawn
       }),
     );
     const scriptPath = path.join(stage, `run-${taskId}.sh`);
+    // 参数顺序关键：--mcp-config 是可变参数（space-separated），prompt 放它后面
+    // 会被吞成配置路径（ENAMETOOLONG 崩溃）。prompt 作首参、--mcp-config 收尾。
+    const claudeBin = resolveOnPath('claude') ?? 'claude';
     writeFileSync(
       scriptPath,
       [
         '#!/bin/bash',
         `cd ${sq(workdir ?? config.tmpRoot)}`,
         // 交互式会话 + 预填首条指令（共识 Q7a：可观看、可插话）
-        `exec claude --mcp-config ${sq(mcpConfigPath)} ${sq(buildPrompt(task))}`,
+        `${sq(claudeBin)} ${sq(buildPrompt(task))} --mcp-config ${sq(mcpConfigPath)}`,
+        // claude 非零退出（配置错/环境错）时窗口不闪退，留着给人看报错
+        'status=$?',
+        'if [ "$status" -ne 0 ]; then',
+        '  echo',
+        '  echo "claude 启动失败（退出码 $status）。窗口保留供排查，按回车关闭。"',
+        '  read -r _',
+        'fi',
         '',
       ].join('\n'),
     );
     await spawnTerminal(scriptPath);
+    console.log(
+      `[launcher] task #${taskId} launched: workdir=${workdir ?? '-'} script=${scriptPath}`,
+    );
   } catch (error) {
     // 终端没起来：立刻把任务还回待办（T13 释放），认领不留死锁
     try {
@@ -322,9 +349,11 @@ export function createLauncherServer({ client, config, spawnTerminal }) {
   const state = { resolveBoundAgent };
   return createServer((req, res) => {
     void handle(client, config, spawnTerminal, state, req, res).catch((error) => {
-      const status = error instanceof LauncherError ? error.status : 500;
-      const code = error instanceof LauncherError ? error.code : 'launcher_error';
-      if (!(error instanceof LauncherError)) {
+      // 看板协议错误（claim_conflict / not_claimable…）原样透传；其余按启动器内部错误
+      const isProtocol = error instanceof LauncherError || error instanceof ApiCallError;
+      const status = isProtocol ? error.status : 500;
+      const code = isProtocol ? error.code : 'launcher_error';
+      if (!isProtocol) {
         console.error('[launcher] unhandled:', error);
       }
       sendJson(res, config, status, { error: { code, message: error.message } });

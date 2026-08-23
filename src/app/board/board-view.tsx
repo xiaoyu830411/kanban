@@ -82,6 +82,20 @@ export default function BoardView({ initialTasks }: Props) {
     }
   }, [priorityFilter, labelFilter]);
 
+  // 后退（bfcache / 路由缓存）恢复的是旧 DOM——回来就重拉，任务列可能已被启动器改了
+  useEffect(() => {
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) void refresh();
+    };
+    const onPopState = () => void refresh();
+    window.addEventListener('pageshow', onPageShow);
+    window.addEventListener('popstate', onPopState);
+    return () => {
+      window.removeEventListener('pageshow', onPageShow);
+      window.removeEventListener('popstate', onPopState);
+    };
+  }, [refresh]);
+
   async function applyFilters() {
     await refresh();
   }

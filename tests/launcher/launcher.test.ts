@@ -267,8 +267,11 @@ describe('launchTask（备目录 → 预认领 → 开终端）', () => {
 
     const script = readFileSync(seen[0], 'utf8');
     expect(script).toContain(`cd '${plain}'`);
-    expect(script).toContain('claude --mcp-config');
     expect(script).toContain('修分页 bug');
+    // 参数顺序：prompt 必须在 --mcp-config 之前——后者是可变参数，会吞掉后面的 prompt
+    expect(script.indexOf('修分页 bug')).toBeLessThan(script.indexOf('--mcp-config'));
+    // claude 非零退出时窗口保留（read 等待），报错不再闪退不可见
+    expect(script).toContain('read -r _');
 
     const mcpConfig = JSON.parse(
       readFileSync(script.match(/--mcp-config '([^']*)'/)![1], 'utf8'),
@@ -442,6 +445,33 @@ describe('HTTP 面（仅 127.0.0.1 语义 + Origin 校验 + CORS）', () => {
 
     const unknown = await fetch(`${base}/nope`);
     expect(unknown.status).toBe(404);
+  });
+
+  it('认领被拒（如已在进行中）→ 状态码与 code 原样透传，不是笼统 500', async () => {
+    const conflict = createLauncherServer({
+      client: stubClient(
+        { id: 503, title: 't', column: 'in_progress', executionType: 'tmp', executionTarget: null },
+        { claimed: [], released: [], detailed: [] },
+        { claimError: new ApiCallError(409, 'not_claimable', 'task is in "in_progress"') },
+      ),
+      config,
+      spawnTerminal: async () => {},
+    });
+    await new Promise<void>((resolve) => conflict.listen(0, '127.0.0.1', resolve));
+    const port = (conflict.address() as AddressInfo).port;
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/launch`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ taskId: 503 }),
+      });
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: 'not_claimable' },
+      });
+    } finally {
+      await new Promise<void>((resolve) => conflict.close(() => resolve()));
+    }
   });
 });
 
