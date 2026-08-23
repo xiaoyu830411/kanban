@@ -3,9 +3,8 @@ import { AuthProviderError } from '@/plugins/auth/provider';
 import { getFeishuProvider } from '@/plugins/auth/feishu-provider';
 import { ensureMember, toPublicMember } from '@/server/kernel/members';
 import { ProtocolError } from '@/server/kernel/protocol';
-import { createSession } from '@/server/kernel/sessions';
+import { createSession, OAUTH_STATE_COOKIE } from '@/server/kernel/sessions';
 import { handleRoute, sessionCookieHeader } from '@/server/http';
-import { OAUTH_STATE_COOKIE } from '../login/route';
 
 export const dynamic = 'force-dynamic';
 

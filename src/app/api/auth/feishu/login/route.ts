@@ -1,12 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { ProtocolError } from '@/server/kernel/protocol';
+import { OAUTH_STATE_COOKIE } from '@/server/kernel/sessions';
 import { getFeishuProvider } from '@/plugins/auth/feishu-provider';
 import { handleRoute } from '@/server/http';
 
 export const dynamic = 'force-dynamic';
-
-export const OAUTH_STATE_COOKIE = 'kanban_feishu_state';
 
 /** 飞书扫码登录入口：302 到授权页，state 存 cookie 防 CSRF。 */
 export async function GET() {

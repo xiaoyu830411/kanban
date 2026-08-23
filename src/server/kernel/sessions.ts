@@ -37,3 +37,6 @@ export async function revokeSession(token: string): Promise<void> {
 
 export const SESSION_COOKIE = 'kanban_session';
 export const SESSION_COOKIE_MAX_AGE = SESSION_TTL_SECONDS;
+
+/** 飞书 OAuth state 防 CSRF cookie（login 写、callback 校验后清）。 */
+export const OAUTH_STATE_COOKIE = 'kanban_feishu_state';
