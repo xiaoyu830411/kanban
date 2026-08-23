@@ -29,6 +29,15 @@ export const activityPlugin: Plugin = {
         occurredAt: event.occurredAt,
       }),
     );
+    context.on('task.released', (event) =>
+      record({
+        taskId: event.payload.taskId,
+        actor: event.payload.actor,
+        action: 'released',
+        detail: {},
+        occurredAt: event.occurredAt,
+      }),
+    );
     context.on('task.moved', (event) =>
       record({
         taskId: event.payload.taskId,

@@ -69,6 +69,10 @@ export class TaskboardClient {
     return this.request('POST', `/api/agent/tasks/${taskId}/claim`);
   }
 
+  releaseTask(taskId) {
+    return this.request('POST', `/api/agent/tasks/${taskId}/release`);
+  }
+
   moveTask(taskId, to) {
     return this.request('PATCH', `/api/agent/tasks/${taskId}/move`, { to });
   }

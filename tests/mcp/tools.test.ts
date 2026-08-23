@@ -68,12 +68,13 @@ async function text(result: Awaited<ReturnType<typeof callTool>>): Promise<strin
 }
 
 describe('工具面覆盖', () => {
-  it('八个工具覆盖 列/详/建/认/移/报/评/DoD 全流程', () => {
+  it('九个工具覆盖 列/详/建/认/释/移/报/评/DoD 全流程', () => {
     expect(TOOL_DEFINITIONS.map((tool) => tool.name)).toEqual([
       'taskboard_list_claimable',
       'taskboard_task_detail',
       'taskboard_create_task',
       'taskboard_claim_task',
+      'taskboard_release_task',
       'taskboard_move_task',
       'taskboard_submit_report',
       'taskboard_add_comment',
@@ -114,6 +115,12 @@ describe('工具 → API 映射（Bearer token 始终携带）', () => {
   it('taskboard_claim_task → POST /api/agent/tasks/:id/claim', async () => {
     const result = await callTool(client(), 'taskboard_claim_task', { taskId: 9 });
     expect(lastRequest()).toMatchObject({ method: 'POST', path: '/api/agent/tasks/9/claim' });
+    expect(result.isError).toBeFalsy();
+  });
+
+  it('taskboard_release_task → POST /api/agent/tasks/:id/release', async () => {
+    const result = await callTool(client(), 'taskboard_release_task', { taskId: 9 });
+    expect(lastRequest()).toMatchObject({ method: 'POST', path: '/api/agent/tasks/9/release' });
     expect(result.isError).toBeFalsy();
   });
 

@@ -22,7 +22,7 @@ claude mcp add taskboard \
   -- node src/mcp/server.mjs
 ```
 
-接入后 Claude Code 获得 8 个工具：
+接入后 Claude Code 获得 9 个工具：
 
 | 工具 | 对应 API | 说明 |
 | --- | --- | --- |
@@ -30,6 +30,7 @@ claude mcp add taskboard \
 | `taskboard_task_detail` | GET /api/agent/tasks/:id | 任务 + DoD + 评论/报告流 |
 | `taskboard_create_task` | POST /api/agent/tasks | 建后续任务（落属主空间，固定待规划） |
 | `taskboard_claim_task` | POST /api/agent/tasks/:id/claim | 认领：待办 → 进行中，独占持有 |
+| `taskboard_release_task` | POST /api/agent/tasks/:id/release | 释放：进行中 → 待办，放弃持有（无法继续执行时退回） |
 | `taskboard_move_task` | PATCH /api/agent/tasks/:id/move | 进行中 → 待验收（请求人工验收） |
 | `taskboard_submit_report` | POST /api/agent/tasks/:id/report | 执行报告（文本 + 改动文件列表） |
 | `taskboard_add_comment` | POST /api/agent/tasks/:id/comments | 评论（与成员互通） |

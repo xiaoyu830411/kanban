@@ -20,6 +20,7 @@ export const DOMAIN_EVENT_NAMES = [
   'task.created',
   'task.moved',
   'task.claimed',
+  'task.released',
   'task.reported',
   'task.comment_added',
   'task.accepted',
@@ -35,6 +36,7 @@ export interface DomainEventMap {
   'task.created': { taskId: number; workspaceId: number; column: BoardColumn; actor: Actor };
   'task.moved': { taskId: number; from: BoardColumn; to: BoardColumn; actor: Actor };
   'task.claimed': { taskId: number; from: BoardColumn; to: BoardColumn; actor: Actor };
+  'task.released': { taskId: number; actor: Actor };
   'task.reported': { taskId: number; reportId: number; changedFiles: string[]; actor: Actor };
   'task.comment_added': { taskId: number; commentId: number; actor: Actor };
   'task.accepted': { taskId: number; actor: Actor };

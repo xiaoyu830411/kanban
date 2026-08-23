@@ -1,7 +1,7 @@
 /**
  * MCP 工具面：taskboard_* 工具 → REST API 的映射层。
- * 覆盖 Agent 执行循环全流程：列（可认领列表）/ 认（认领）/ 报（执行报告）/
- * 移（移列请求验收）/ 评（评论）/ DoD（勾选附证据）＋ 任务详情 ＋ 创建后续任务。
+ * 覆盖 Agent 执行循环全流程：列（可认领列表）/ 认（认领）/ 释（释放）/
+ * 报（执行报告）/ 移（移列请求验收）/ 评（评论）/ DoD（勾选附证据）＋ 任务详情 ＋ 创建后续任务。
  */
 import { z } from 'zod';
 import { ApiCallError } from './client.mjs';
@@ -36,6 +36,11 @@ export const TOOL_DEFINITIONS = [
   {
     name: 'taskboard_claim_task',
     description: '认领任务：待办 → 进行中并独占持有（并发认领只有一个成功，冲突返回错误）',
+    inputSchema: { taskId: taskIdSchema },
+  },
+  {
+    name: 'taskboard_release_task',
+    description: '释放任务：进行中 → 待办并放弃持有（无法继续执行时主动退回；仅持有者、仅进行中）',
     inputSchema: { taskId: taskIdSchema },
   },
   {
@@ -80,6 +85,7 @@ const OPERATIONS = {
       ...(args.labels !== undefined ? { labels: args.labels } : {}),
     }),
   taskboard_claim_task: (client, args) => client.claimTask(args.taskId),
+  taskboard_release_task: (client, args) => client.releaseTask(args.taskId),
   taskboard_move_task: (client, args) => client.moveTask(args.taskId, args.to),
   taskboard_submit_report: (client, args) =>
     client.submitReport(args.taskId, args.body, args.changedFiles),

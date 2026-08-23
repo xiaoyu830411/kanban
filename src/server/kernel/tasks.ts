@@ -279,6 +279,67 @@ export async function claimTask(agent: Agent, taskId: number): Promise<Task> {
   return updated;
 }
 
+/**
+ * 释放（认领的逆操作）：进行中 → 待办并放弃持有。
+ * Agent 自释放：仅持有者、仅进行中（待验收中的任务等成员验收或退回，不由 Agent 撤回）。
+ * 原子 UPDATE（WHERE column='in_progress' AND held_by=自己）防并发释放/移列竞态。
+ */
+export async function releaseTask(agent: Agent, taskId: number): Promise<Task> {
+  const task = await requireAgentScopedTask(agent, taskId);
+  if (task.heldByAgentId !== agent.id) {
+    throw new ProtocolError(403, 'not_holder', 'only the holding agent can release this task');
+  }
+  if (task.column !== 'in_progress') {
+    throw new ProtocolError(
+      409,
+      'not_releasable',
+      `task is in "${task.column}"; only "in_progress" tasks can be released`,
+    );
+  }
+  const result = await getDb()
+    .update(tasks)
+    .set({ column: 'todo', heldByAgentId: null, updatedAt: new Date() })
+    .where(and(eq(tasks.id, taskId), eq(tasks.column, 'in_progress'), eq(tasks.heldByAgentId, agent.id)));
+  const affected = (result[0] as { affectedRows: number }).affectedRows;
+  if (affected === 0) {
+    throw new ProtocolError(409, 'not_releasable', 'task was moved or released concurrently');
+  }
+
+  const updated = await getTaskById(taskId);
+  await getEventBus().publish('task.released', {
+    taskId,
+    actor: { type: 'agent', id: agent.id },
+  });
+  return updated;
+}
+
+/** 成员强制释放：救回卡死的进行中任务（如 Agent 进程崩溃后无人退回）；持有者不限。 */
+export async function forceReleaseTask(memberId: number, taskId: number): Promise<Task> {
+  const task = await requireOwnTask(memberId, taskId);
+  if (task.column !== 'in_progress') {
+    throw new ProtocolError(
+      409,
+      'not_releasable',
+      `task is in "${task.column}"; only "in_progress" tasks can be released`,
+    );
+  }
+  const result = await getDb()
+    .update(tasks)
+    .set({ column: 'todo', heldByAgentId: null, updatedAt: new Date() })
+    .where(and(eq(tasks.id, taskId), eq(tasks.column, 'in_progress')));
+  const affected = (result[0] as { affectedRows: number }).affectedRows;
+  if (affected === 0) {
+    throw new ProtocolError(409, 'not_releasable', 'task was moved or released concurrently');
+  }
+
+  const updated = await getTaskById(taskId);
+  await getEventBus().publish('task.released', {
+    taskId,
+    actor: { type: 'member', id: memberId },
+  });
+  return updated;
+}
+
 /** Agent 移列：仅持有者；矩阵（进行中 → 待验收）；「已完成」对 Agent 永远 403（ADR-0001）。 */
 export async function moveTaskAsAgent(agent: Agent, taskId: number, to: string): Promise<Task> {
   if (!isBoardColumn(to)) {
