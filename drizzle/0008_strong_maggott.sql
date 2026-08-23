@@ -1,0 +1,1 @@
+ALTER TABLE `tasks` ADD `execution_ref` varchar(200);

@@ -108,6 +108,7 @@ export interface CreateTaskInput {
   column?: TaskEntryColumn;
   executionType?: TaskExecutionType;
   executionTarget?: string | null;
+  executionRef?: string | null;
 }
 
 export interface CreateTaskContext {
@@ -125,6 +126,7 @@ export function validateCreateTaskInput(input: {
   column?: unknown;
   executionType?: unknown;
   executionTarget?: unknown;
+  executionRef?: unknown;
 }): CreateTaskInput {
   const title = typeof input.title === 'string' ? input.title.trim() : '';
   if (title.length === 0) throw new ProtocolError(400, 'invalid_title', 'title is required');
@@ -178,6 +180,16 @@ export function validateCreateTaskInput(input: {
     }
     executionTarget = target;
   }
+  // 起始分支（CONTEXT.md）：仅 dir/repo 有意义，可选；tmp 归一为 NULL。
+  // 同样不做存在性校验——分支不存在在启动时报（启动器职责）。
+  let executionRef: string | null = null;
+  if (executionType !== 'tmp') {
+    const ref = typeof input.executionRef === 'string' ? input.executionRef.trim() : '';
+    if (ref.length > 200) {
+      throw new ProtocolError(400, 'invalid_execution_ref', 'executionRef must be at most 200 characters');
+    }
+    executionRef = ref.length === 0 ? null : ref;
+  }
   return {
     title,
     description,
@@ -186,6 +198,7 @@ export function validateCreateTaskInput(input: {
     column: column as TaskEntryColumn,
     executionType: executionType as TaskExecutionType,
     executionTarget,
+    executionRef,
   };
 }
 
@@ -202,6 +215,7 @@ export async function createTask(input: CreateTaskInput, context: CreateTaskCont
       column: input.column ?? 'to_plan',
       executionType: input.executionType ?? 'tmp',
       executionTarget: input.executionTarget ?? null,
+      executionRef: input.executionRef ?? null,
       createdById: context.ownerId,
     })
     .$returningId();
@@ -455,6 +469,7 @@ export function toPublicTask(task: Task): {
   assigneeAgentId: number | null;
   executionType: TaskExecutionType;
   executionTarget: string | null;
+  executionRef: string | null;
   heldByAgentId: number | null;
   createdAt: string;
   updatedAt: string;
@@ -470,6 +485,7 @@ export function toPublicTask(task: Task): {
     assigneeAgentId: task.assigneeAgentId,
     executionType: task.executionType,
     executionTarget: task.executionTarget,
+    executionRef: task.executionRef,
     heldByAgentId: task.heldByAgentId,
     createdAt: task.createdAt.toISOString(),
     updatedAt: task.updatedAt.toISOString(),

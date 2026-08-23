@@ -28,6 +28,7 @@ interface PublicTask {
   id: number;
   executionType: string;
   executionTarget: string | null;
+  executionRef: string | null;
 }
 
 async function createTask(
@@ -132,5 +133,86 @@ describe('执行目录（T14，CONTEXT.md「执行目录」）', () => {
     expect(detail.status).toBe(200);
     const detailBody = (await detail.json()) as { task: PublicTask };
     expect(detailBody.task).toMatchObject({ executionType: 'tmp', executionTarget: null });
+  });
+});
+
+describe('起始分支（#19，CONTEXT.md「起始分支」）', () => {
+  setupIsolatedDb();
+
+  it('dir/repo 落库读回；缺省与 tmp 归一为 NULL；列表与 Agent 详情均带出', async () => {
+    const jonas = await memberIdFromLogin('jonas');
+
+    const dirTask = await createTask(jonas.cookie, {
+      title: '带起始分支的指定目录任务',
+      executionType: 'dir',
+      executionTarget: '/Users/jonas/Projects/foo',
+      executionRef: 'release/1.0',
+    });
+    expect(dirTask.status).toBe(201);
+    expect(dirTask.task).toMatchObject({ executionType: 'dir', executionRef: 'release/1.0' });
+
+    const repoTask = await createTask(jonas.cookie, {
+      title: '带起始分支的仓库任务',
+      executionType: 'repo',
+      executionTarget: 'git@github.com:acme/foo.git',
+      executionRef: 'origin/release/1.2',
+    });
+    expect(repoTask.status).toBe(201);
+    expect(repoTask.task).toMatchObject({ executionRef: 'origin/release/1.2' });
+
+    // 缺省与空白串 → NULL
+    const noRef = await createTask(jonas.cookie, {
+      title: '不带起始分支',
+      executionType: 'dir',
+      executionTarget: '/Users/jonas/Projects/foo',
+    });
+    expect(noRef.task).toMatchObject({ executionRef: null });
+
+    const blankRef = await createTask(jonas.cookie, {
+      title: '空白起始分支',
+      executionType: 'repo',
+      executionTarget: 'git@github.com:acme/foo.git',
+      executionRef: '   ',
+    });
+    expect(blankRef.task).toMatchObject({ executionRef: null });
+
+    // tmp 型传 ref 也归一为 NULL（tmp 不携带 git 语义）
+    const tmpWithRef = await createTask(jonas.cookie, {
+      title: 'tmp 带起始分支会被忽略',
+      executionType: 'tmp',
+      executionRef: 'release/1.0',
+    });
+    expect(tmpWithRef.status).toBe(201);
+    expect(tmpWithRef.task).toMatchObject({ executionType: 'tmp', executionRef: null });
+
+    // 成员列表读回一致
+    const list = await listTasksRoute(apiRequest('/api/tasks', { headers: { cookie: jonas.cookie } }));
+    const tasks = ((await list.json()) as { tasks: PublicTask[] }).tasks;
+    expect(tasks.find((task) => task.id === dirTask.task!.id)).toMatchObject({ executionRef: 'release/1.0' });
+
+    // Agent 侧详情同样带出（启动器由此读起始分支）
+    const { token } = await createAgentByKernel(jonas.memberId, 'worker');
+    const detail = await agentTaskDetailRoute(
+      apiRequest('/api/agent/tasks/' + repoTask.task!.id, {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+      ctx(repoTask.task!.id),
+    );
+    expect(detail.status).toBe(200);
+    const detailBody = (await detail.json()) as { task: PublicTask };
+    expect(detailBody.task).toMatchObject({ executionRef: 'origin/release/1.2' });
+  });
+
+  it('超长 executionRef → 400 invalid_execution_ref', async () => {
+    const jonas = await memberIdFromLogin('jonas');
+
+    const tooLong = await createTask(jonas.cookie, {
+      title: '超长起始分支',
+      executionType: 'repo',
+      executionTarget: 'git@github.com:acme/foo.git',
+      executionRef: 'r'.repeat(201),
+    });
+    expect(tooLong.status).toBe(400);
+    expect(tooLong.code).toBe('invalid_execution_ref');
   });
 });

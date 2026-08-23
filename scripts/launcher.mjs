@@ -25,6 +25,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -79,34 +80,160 @@ function repoNameFromTarget(target) {
   return name.replace(/[^a-zA-Z0-9._-]/g, '_');
 }
 
-/**
- * 确保任务 worktree 存在：git worktree add <worktrees/taskId> [-b] task/<taskId>。
- * 已存在则复用；分支已存在（上次执行保留）则直接检出该分支。
- * 分支按共识保留，供验收 diff；清理只删 worktree（GC 只处理已完成任务）。
- */
-export async function ensureWorktree(sourceRepo, taskId, config) {
-  const worktreePath = path.join(config.worktreeRoot, String(taskId));
-  if (existsSync(worktreePath)) return worktreePath;
+// ---- worktree 起源记录 ----
+// 记录建 worktree 时用的任务级 {executionTarget, executionRef} 与解析出的 base 提交，
+// 供下次启动比对「起源是否被改」。放在 worktree 外——放里面会让 git status 永远显示脏。
 
-  mkdirSync(config.worktreeRoot, { recursive: true });
-  const branch = `task/${taskId}`;
+function metaPath(taskId, config) {
+  return path.join(config.worktreeRoot, `${taskId}.meta.json`);
+}
+
+function readMeta(taskId, config) {
   try {
-    await git(sourceRepo, 'worktree', 'add', '-b', branch, worktreePath);
+    return JSON.parse(readFileSync(metaPath(taskId, config), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function writeMeta(taskId, config, origin, baseSha) {
+  writeFileSync(
+    metaPath(taskId, config),
+    JSON.stringify({
+      executionTarget: origin.executionTarget ?? null,
+      executionRef: origin.executionRef ?? null,
+      baseSha,
+    }),
+  );
+}
+
+/** worktree 是否无未提交改动。 */
+async function isWorktreeClean(worktreePath) {
+  const { stdout } = await git(worktreePath, 'status', '--porcelain');
+  return stdout.trim().length === 0;
+}
+
+/** 删 worktree（走主仓库 worktree remove；失败兜底 rmSync）。分支不动（共识：保留）。 */
+async function removeWorktree(worktreePath) {
+  try {
+    const { stdout } = await git(worktreePath, 'rev-parse', '--git-common-dir');
+    const mainRepo = path.resolve(worktreePath, stdout.trim());
+    await git(mainRepo, 'worktree', 'remove', '--force', worktreePath);
+  } catch {
+    rmSync(worktreePath, { recursive: true, force: true }); // 兜底
+  }
+}
+
+/**
+ * 起源是否未被改（可复用现有 worktree）。旧版 worktree 无 meta：
+ * 无起始分支 → 保守复用；指定了起始分支 → 视为变更（不能静默沿用旧检出）。
+ */
+async function originUnchanged(taskId, config, origin) {
+  const meta = readMeta(taskId, config);
+  if (!meta) return origin.executionRef == null;
+  return (
+    meta.executionTarget === (origin.executionTarget ?? null) &&
+    meta.executionRef === (origin.executionRef ?? null)
+  );
+}
+
+/**
+ * 起源变更后的重建：仅当现场无任何执行产物才删旧建新——
+ * 未提交改动（git status 脏）或分支上有执行提交（tip ≠ 建出时的 base）都会拒绝。
+ * 分支无执行提交（tip == baseSha）时连分支一起删：那正是「从新起点重来」的本意。
+ */
+async function rebuildWorktree(sourceRepo, worktreePath, taskId, config) {
+  const branch = `task/${taskId}`;
+  const meta = readMeta(taskId, config);
+  if (!(await isWorktreeClean(worktreePath))) {
+    throw new LauncherError(
+      'worktree_dirty',
+      `worktree 有未提交改动，未按新起始分支重建：${worktreePath}（处理或提交后再启动）`,
+      409,
+    );
+  }
+  if (!meta?.baseSha) {
+    throw new LauncherError(
+      'worktree_dirty',
+      `旧版 worktree 无起源记录，无法安全按新起始分支重建：${worktreePath}（请手动清理后再启动）`,
+      409,
+    );
+  }
+  const { stdout } = await git(sourceRepo, 'rev-parse', branch);
+  if (stdout.trim() !== meta.baseSha) {
+    throw new LauncherError(
+      'worktree_dirty',
+      `分支 ${branch} 上已有执行提交（验收 diff 依赖），未按新起始分支重建`,
+      409,
+    );
+  }
+  await removeWorktree(worktreePath);
+  await git(sourceRepo, 'branch', '-D', branch);
+}
+
+/**
+ * 建 worktree 分支：自起始分支（缺省 HEAD）建 task/<taskId>。
+ * 分支已存在（上次执行保留）→ 检出既有分支。返回解析出的 base 提交 SHA。
+ */
+async function addWorktreeBranch(sourceRepo, worktreePath, branch, startRef) {
+  try {
+    await git(sourceRepo, 'worktree', 'add', '-b', branch, worktreePath, ...(startRef ? [startRef] : []));
+    const { stdout } = await git(sourceRepo, 'rev-parse', startRef ?? 'HEAD');
+    return stdout.trim();
   } catch (error) {
     const stderr = String(error.stderr ?? error.message ?? '');
     if (stderr.includes('already exists') || stderr.includes('already checked out')) {
       // 分支已存在（上次执行的产物，共识：分支保留）→ 检出既有分支
       await git(sourceRepo, 'worktree', 'add', worktreePath, branch);
-    } else {
-      throw new LauncherError('worktree_failed', `git worktree add failed: ${stderr.trim()}`, 500);
+      const { stdout } = await git(sourceRepo, 'rev-parse', branch);
+      return stdout.trim();
     }
+    if (startRef && /invalid reference|unknown revision|not a valid object|bad object|did not match any/i.test(stderr)) {
+      throw new LauncherError('invalid_execution_ref', `起始分支不存在或不可解析：${startRef}`, 400);
+    }
+    throw new LauncherError('worktree_failed', `git worktree add failed: ${stderr.trim()}`, 500);
   }
+}
+
+/**
+ * 确保任务 worktree 存在：git worktree add <worktrees/taskId> [-b] task/<taskId> [起始分支]。
+ * 新建自 origin.executionRef（缺省 HEAD）；已存在则起源未变复用、变了按
+ * rebuildWorktree 的安全口径重建（绝不删执行现场）。分支按共识保留，供验收 diff。
+ *
+ * @param {string} sourceRepo
+ * @param {number} taskId
+ * @param {ReturnType<typeof resolveConfig>} config
+ * @param {{ executionTarget?: string | null, executionRef?: string | null }} [origin]
+ */
+export async function ensureWorktree(
+  sourceRepo,
+  taskId,
+  config,
+  origin = { executionTarget: null, executionRef: null },
+) {
+  const worktreePath = path.join(config.worktreeRoot, String(taskId));
+  const branch = `task/${taskId}`;
+
+  if (existsSync(worktreePath)) {
+    if (await originUnchanged(taskId, config, origin)) return worktreePath;
+    await rebuildWorktree(sourceRepo, worktreePath, taskId, config);
+  }
+
+  mkdirSync(config.worktreeRoot, { recursive: true });
+  const baseSha = await addWorktreeBranch(sourceRepo, worktreePath, branch, origin.executionRef);
+  writeMeta(taskId, config, origin, baseSha);
   return worktreePath;
+}
+
+/** 起源＝任务级的目录目标 + 起始分支（repo 型记录远端地址，不是缓存克隆路径）。 */
+function originOf(task) {
+  return { executionTarget: task.executionTarget ?? null, executionRef: task.executionRef ?? null };
 }
 
 /**
  * 执行目录准备（CONTEXT.md「执行目录」三型）。返回实际工作目录。
  * 存在性/克隆失败在此报错（共识 Q3：创建时不校验，执行时校验）。
+ * dir 型目标非 git 仓库时静默忽略起始分支（无 git 可言，按现状在原目录执行）。
  */
 export async function prepareExecutionDir(task, config) {
   if (task.executionType === 'tmp') {
@@ -122,7 +249,7 @@ export async function prepareExecutionDir(task, config) {
       );
     }
     if (isGitRepo(task.executionTarget)) {
-      return ensureWorktree(task.executionTarget, task.id, config); // 保护主检出
+      return ensureWorktree(task.executionTarget, task.id, config, originOf(task)); // 保护主检出
     }
     return task.executionTarget;
   }
@@ -148,35 +275,40 @@ export async function prepareExecutionDir(task, config) {
         console.warn('[launcher] fetch failed (continuing with cache):', error.message);
       }
     }
-    return ensureWorktree(cache, task.id, config);
+    return ensureWorktree(cache, task.id, config, originOf(task));
   }
   throw new LauncherError('invalid_execution_type', `unknown executionType: ${task.executionType}`);
 }
 
-/** 启动时 GC：已完成（或已删除）任务的 worktree 删除，分支保留（验收 diff 用）。 */
+/**
+ * 启动时 GC：已完成（或已删除）任务的 worktree 删除，分支保留（验收 diff 用）。
+ * 起源 meta 随 worktree 一并清理；孤儿 meta（worktree 已不在）顺手扫掉。
+ */
 export async function gcWorktrees(client, config) {
   if (!existsSync(config.worktreeRoot)) return;
   for (const entry of readdirSync(config.worktreeRoot)) {
-    if (!/^\d+$/.test(entry)) continue;
-    const taskId = Number(entry);
-    const worktreePath = path.join(config.worktreeRoot, entry);
-    let done = false;
-    try {
-      const detail = await client.taskDetail(taskId);
-      done = detail.task.column === 'done';
-    } catch (error) {
-      // 任务已删除 → worktree 成孤儿，一并清理
-      done = error instanceof ApiCallError && error.status === 404;
+    if (/^\d+$/.test(entry)) {
+      const taskId = Number(entry);
+      const worktreePath = path.join(config.worktreeRoot, entry);
+      let done = false;
+      try {
+        const detail = await client.taskDetail(taskId);
+        done = detail.task.column === 'done';
+      } catch (error) {
+        // 任务已删除 → worktree 成孤儿，一并清理
+        done = error instanceof ApiCallError && error.status === 404;
+      }
+      if (!done) continue;
+      await removeWorktree(worktreePath);
+      rmSync(metaPath(taskId, config), { force: true });
+      console.log(`[launcher] gc: removed worktree for task #${taskId} (branch kept)`);
+    } else if (/^\d+\.meta\.json$/.test(entry)) {
+      const taskId = Number(entry.split('.')[0]);
+      if (!existsSync(path.join(config.worktreeRoot, String(taskId)))) {
+        rmSync(path.join(config.worktreeRoot, entry), { force: true });
+        console.log(`[launcher] gc: removed orphan meta for task #${taskId}`);
+      }
     }
-    if (!done) continue;
-    try {
-      const { stdout } = await git(worktreePath, 'rev-parse', '--git-common-dir');
-      const mainRepo = path.resolve(worktreePath, stdout.trim());
-      await git(mainRepo, 'worktree', 'remove', '--force', worktreePath);
-    } catch {
-      rmSync(worktreePath, { recursive: true, force: true }); // 兜底
-    }
-    console.log(`[launcher] gc: removed worktree for task #${taskId} (branch kept)`);
   }
 }
 

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { Server } from 'node:http';
@@ -34,6 +34,7 @@ interface StubTask {
   column: string;
   executionType: 'tmp' | 'dir' | 'repo';
   executionTarget: string | null;
+  executionRef?: string | null;
 }
 
 interface StubClient {
@@ -211,6 +212,159 @@ describe('prepareExecutionDir（CONTEXT.md「执行目录」三型）', () => {
   });
 });
 
+describe('ensureWorktree 起始分支（#19，CONTEXT.md「起始分支」）', () => {
+  /** 在 source 里建带标记的分支：marker.txt 内容=分支名（文件名固定——分支名含 /，不能当文件名）。 */
+  async function branchWithMarker(repo: string, name: string): Promise<void> {
+    await execFileAsync('git', ['-C', repo, 'checkout', '-b', name]);
+    writeFileSync(path.join(repo, 'marker.txt'), name);
+    await execFileAsync('git', ['-C', repo, 'add', '.']);
+    await execFileAsync('git', ['-C', repo, 'commit', '-m', `marker ${name}`]);
+    await execFileAsync('git', ['-C', repo, 'checkout', 'main']);
+  }
+
+  /** 读 worktree 的 marker.txt（＝检出起点分支名）。 */
+  function markerOf(worktree: string): string {
+    return readFileSync(path.join(worktree, 'marker.txt'), 'utf8');
+  }
+
+  it('新建：自起始分支检出（标记文件对得上）；起源未变 → 复用', async () => {
+    const source = path.join(root, 'ref-repo');
+    mkdirSync(source, { recursive: true });
+    await gitInit(source);
+    await branchWithMarker(source, 'release/1.0');
+
+    const origin = { executionTarget: source, executionRef: 'release/1.0' };
+    const worktree = await ensureWorktree(source, 601, config, origin);
+    expect(markerOf(worktree)).toBe('release/1.0');
+    expect(JSON.parse(readFileSync(path.join(config.worktreeRoot, '601.meta.json'), 'utf8'))).toMatchObject(origin);
+    expect(await worktreeBranches(source)).toContain('task/601');
+
+    // 起源未变 → 直接复用，不重建
+    expect(await ensureWorktree(source, 601, config, origin)).toBe(worktree);
+  });
+
+  it('变更 + 现场干净（无提交）→ 删旧重建，自新起始分支检出', async () => {
+    const source = path.join(root, 'rebuild-repo');
+    mkdirSync(source, { recursive: true });
+    await gitInit(source);
+    await branchWithMarker(source, 'release/1.0');
+    await branchWithMarker(source, 'release/2.0');
+
+    const first = await ensureWorktree(source, 602, config, {
+      executionTarget: source,
+      executionRef: 'release/1.0',
+    });
+    expect(markerOf(first)).toBe('release/1.0');
+
+    // 改起始分支 → worktree 干净且分支无执行提交 → 重建
+    const rebuilt = await ensureWorktree(source, 602, config, {
+      executionTarget: source,
+      executionRef: 'release/2.0',
+    });
+    expect(rebuilt).toBe(first); // 路径不变，内容换血
+    expect(markerOf(rebuilt)).toBe('release/2.0');
+    expect(await worktreeBranches(source)).toContain('task/602');
+  });
+
+  it('变更 + worktree 有未提交改动 → worktree_dirty（不删现场）', async () => {
+    const source = path.join(root, 'dirty-repo');
+    mkdirSync(source, { recursive: true });
+    await gitInit(source);
+    await branchWithMarker(source, 'release/1.0');
+
+    const worktree = await ensureWorktree(source, 603, config, {
+      executionTarget: source,
+      executionRef: 'release/1.0',
+    });
+    writeFileSync(path.join(worktree, '未提交.txt'), '执行现场');
+
+    await expect(
+      ensureWorktree(source, 603, config, { executionTarget: source, executionRef: null }),
+    ).rejects.toMatchObject({ code: 'worktree_dirty' });
+    expect(existsSync(path.join(worktree, '未提交.txt'))).toBe(true); // 现场未被删
+  });
+
+  it('变更 + 分支上有执行提交（tip ≠ base）→ worktree_dirty（保验收 diff）', async () => {
+    const source = path.join(root, 'committed-repo');
+    mkdirSync(source, { recursive: true });
+    await gitInit(source);
+    await branchWithMarker(source, 'release/1.0');
+
+    const worktree = await ensureWorktree(source, 604, config, {
+      executionTarget: source,
+      executionRef: 'release/1.0',
+    });
+    // worktree 里干净地提交一笔（执行产物）
+    writeFileSync(path.join(worktree, 'done.txt'), '已提交的执行结果');
+    await execFileAsync('git', ['-C', worktree, 'add', '.']);
+    await execFileAsync('git', ['-C', worktree, 'commit', '-m', 'exec work']);
+
+    await expect(
+      ensureWorktree(source, 604, config, { executionTarget: source, executionRef: null }),
+    ).rejects.toMatchObject({ code: 'worktree_dirty' });
+    expect(await worktreeBranches(source)).toContain('task/604'); // 分支保留
+  });
+
+  it('旧版 worktree 无 meta：无起始分支 → 保守复用；指定起始分支 → 拒绝（无法安全重建）', async () => {
+    const source = path.join(root, 'legacy-repo');
+    mkdirSync(source, { recursive: true });
+    await gitInit(source);
+    await branchWithMarker(source, 'release/1.0');
+
+    const worktree = await ensureWorktree(source, 605, config); // 建出即写 meta
+    rmSync(path.join(config.worktreeRoot, '605.meta.json')); // 抹掉 → 模拟旧版
+
+    // 无起始分支：维持旧行为（复用），并补写 meta
+    expect(await ensureWorktree(source, 605, config, { executionTarget: source, executionRef: null })).toBe(worktree);
+    expect(existsSync(path.join(config.worktreeRoot, '605.meta.json'))).toBe(false); // 复用路径不补写
+
+    // 指定起始分支：起源视为变更，但无 baseSha 记录 → 拒绝交人处理
+    rmSync(path.join(config.worktreeRoot, '605.meta.json'), { force: true });
+    await expect(
+      ensureWorktree(source, 605, config, { executionTarget: source, executionRef: 'release/1.0' }),
+    ).rejects.toMatchObject({ code: 'worktree_dirty' });
+  });
+
+  it('起始分支不存在 → invalid_execution_ref', async () => {
+    const source = path.join(root, 'bad-ref-repo');
+    mkdirSync(source, { recursive: true });
+    await gitInit(source);
+
+    await expect(
+      ensureWorktree(source, 606, config, { executionTarget: source, executionRef: 'no-such-branch' }),
+    ).rejects.toMatchObject({ code: 'invalid_execution_ref' });
+  });
+
+  it('dir 型目标非 git 仓库：起始分支被忽略，原目录执行不报错', async () => {
+    const plain = path.join(root, 'plain-with-ref');
+    mkdirSync(plain, { recursive: true });
+    await expect(
+      prepareExecutionDir(
+        { id: 607, title: 't', column: 'todo', executionType: 'dir', executionTarget: plain, executionRef: 'main' },
+        config,
+      ),
+    ).resolves.toBe(plain);
+  });
+
+  it('repo 型：起始分支支持远端跟踪引用（origin/<branch>）', async () => {
+    const remote = path.join(root, 'ref-remote');
+    mkdirSync(remote, { recursive: true });
+    await gitInit(remote);
+    await branchWithMarker(remote, 'release/3.0');
+
+    // 先克隆出缓存（不带 ref），再用 origin/release/3.0 建 worktree
+    const cache = path.join(config.repoCacheRoot, 'ref-remote');
+    mkdirSync(config.repoCacheRoot, { recursive: true });
+    await execFileAsync('git', ['clone', remote, cache]);
+
+    const worktree = await ensureWorktree(cache, 608, config, {
+      executionTarget: remote,
+      executionRef: 'origin/release/3.0',
+    });
+    expect(markerOf(worktree)).toBe('release/3.0');
+  });
+});
+
 describe('gcWorktrees（已完成/已删除 → 删 worktree，分支保留）', () => {
   it('done 与 404 清理；未完成保留', async () => {
     const source = path.join(root, 'gc-repo');
@@ -232,6 +386,13 @@ describe('gcWorktrees（已完成/已删除 → 删 worktree，分支保留）',
     expect(existsSync(path.join(config.worktreeRoot, '301'))).toBe(false);
     expect(existsSync(path.join(config.worktreeRoot, '302'))).toBe(false);
     expect(existsSync(path.join(config.worktreeRoot, '303'))).toBe(true);
+    // 起源 meta 随 worktree 清理；未完成任务的保留；孤儿 meta（无 worktree）顺手扫掉
+    expect(existsSync(path.join(config.worktreeRoot, '301.meta.json'))).toBe(false);
+    expect(existsSync(path.join(config.worktreeRoot, '302.meta.json'))).toBe(false);
+    expect(existsSync(path.join(config.worktreeRoot, '303.meta.json'))).toBe(true);
+    writeFileSync(path.join(config.worktreeRoot, '999.meta.json'), '{}');
+    await gcWorktrees(stub as unknown as StubClient, config);
+    expect(existsSync(path.join(config.worktreeRoot, '999.meta.json'))).toBe(false);
     // 分支保留（验收 diff 用）
     expect(await worktreeBranches(source)).toEqual(expect.arrayContaining(['task/301', 'task/302', 'task/303']));
   });

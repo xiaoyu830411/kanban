@@ -67,6 +67,8 @@ export const tasks = mysqlTable('tasks', {
     .default('tmp'),
   /** 执行目录目标：dir=绝对路径、repo=本地路径或远端 URL；tmp 恒 NULL。 */
   executionTarget: varchar('execution_target', { length: 500 }),
+  /** 起始分支（CONTEXT.md「起始分支」）：dir/repo 型可选检出起点；tmp 恒 NULL。 */
+  executionRef: varchar('execution_ref', { length: 200 }),
   /** 认领后的独占持有者。 */
   heldByAgentId: int('held_by_agent_id').references(() => agents.id),
   createdById: int('created_by_id')
