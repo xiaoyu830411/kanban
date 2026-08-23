@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BOARD_COLUMNS,
   BOARD_COLUMN_LABELS,
@@ -95,6 +95,29 @@ export default function BoardView({ initialTasks }: Props) {
       window.removeEventListener('popstate', onPopState);
     };
   }, [refresh]);
+
+  // 任务事件流（SSE）：claude/其他端改任务时实时重拉（250ms 去抖合并 DoD 连勾等突发），
+  // 不再依赖手动刷新。refreshRef 让连接不随筛选条件变化而重建。
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
+  useEffect(() => {
+    const source = new EventSource('/api/events');
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    source.onmessage = (event) => {
+      try {
+        const parsed = JSON.parse(event.data) as { name?: string };
+        if (!parsed.name?.startsWith('task.')) return;
+      } catch {
+        return;
+      }
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void refreshRef.current(), 250);
+    };
+    return () => {
+      source.close();
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
 
   async function applyFilters() {
     await refresh();

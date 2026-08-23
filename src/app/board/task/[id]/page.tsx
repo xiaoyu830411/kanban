@@ -13,6 +13,7 @@ import TaskActions from './task-actions';
 import DodList from './dod-list';
 import CommentComposer from './comment-composer';
 import { CommentStream } from './comment-stream';
+import LiveRefresher from './live-refresher';
 import { listTaskActivity } from '@/plugins/activity/plugin';
 
 const ACTION_LABELS: Record<string, (detail: Record<string, unknown>) => string> = {
@@ -55,6 +56,7 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
 
   return (
     <div className="mx-auto flex min-h-screen max-w-3xl flex-col gap-6 p-8">
+      <LiveRefresher taskId={task.id} />
       <header className="flex items-center justify-between">
         <Link href="/board" className="text-sm text-neutral-500 hover:text-neutral-800">
           ← 返回看板
