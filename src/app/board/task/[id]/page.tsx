@@ -7,7 +7,7 @@ import { requireOwnTask } from '@/server/kernel/tasks';
 import { listDodItems } from '@/server/kernel/dod';
 import { listTaskComments } from '@/server/kernel/comments';
 import { BOARD_COLUMN_LABELS } from '@/server/kernel/board-columns';
-import { TASK_PRIORITY_LABELS } from '@/server/kernel/task-meta';
+import { TASK_EXECUTION_TYPE_LABELS, TASK_PRIORITY_LABELS } from '@/server/kernel/task-meta';
 import { ProtocolError } from '@/server/kernel/protocol';
 import TaskActions from './task-actions';
 import DodList from './dod-list';
@@ -81,6 +81,10 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
               `（指派：${agentNames.get(task.assigneeAgentId) ?? `#${task.assigneeAgentId}`}）`}
           </p>
         )}
+        <p className="mt-1 text-xs text-neutral-500">
+          执行目录：{TASK_EXECUTION_TYPE_LABELS[task.executionType]}
+          {task.executionTarget ? `（${task.executionTarget}）` : '（执行时自动创建）'}
+        </p>
         {task.description && <p className="mt-3 whitespace-pre-wrap text-sm text-neutral-700">{task.description}</p>}
 
         <TaskActions taskId={task.id} column={task.column} />

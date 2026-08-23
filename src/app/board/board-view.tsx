@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   BOARD_COLUMNS,
   BOARD_COLUMN_LABELS,
@@ -16,6 +16,12 @@ import {
   type TaskExecutionType,
   type TaskPriority,
 } from '@/server/kernel/task-meta';
+import {
+  isLaunchable,
+  launchViaLauncher,
+  probeLauncher,
+  type LauncherHealth,
+} from './launch';
 
 export interface BoardTask {
   id: number;
@@ -42,6 +48,23 @@ export default function BoardView({ initialTasks }: Props) {
   const [notice, setNotice] = useState<{ kind: 'error' | 'info'; text: string } | null>(null);
   const [creating, setCreating] = useState(false);
   const [dragging, setDragging] = useState<number | null>(null);
+  const [launcher, setLauncher] = useState<LauncherHealth | null>(null);
+  const [launchingId, setLaunchingId] = useState<number | null>(null);
+
+  // 启动器探测：加载即探，之后 30s 节流刷新（ADR-0002 修订——按钮走本机直连）
+  useEffect(() => {
+    let alive = true;
+    const probe = async () => {
+      const health = await probeLauncher();
+      if (alive) setLauncher(health);
+    };
+    void probe();
+    const timer = setInterval(probe, 30_000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, []);
 
   const allLabels = useMemo(
     () => [...new Set(tasks.flatMap((task) => task.labels))].sort(),
@@ -89,6 +112,22 @@ export default function BoardView({ initialTasks }: Props) {
       return;
     }
     await refresh();
+  }
+
+  /** 一键启动：启动器预认领（原子）→ 开 Terminal 跑 claude；失败码直接上 toast。 */
+  async function launchTask(taskId: number) {
+    setLaunchingId(taskId);
+    try {
+      const result = await launchViaLauncher(taskId);
+      if (result.ok) {
+        setNotice({ kind: 'info', text: '已启动执行：Terminal 已打开，任务转入进行中' });
+        await refresh();
+      } else {
+        setNotice({ kind: 'error', text: `启动失败 [${result.code}]：${result.message}` });
+      }
+    } finally {
+      setLaunchingId(null);
+    }
   }
 
   return (
@@ -237,6 +276,21 @@ export default function BoardView({ initialTasks }: Props) {
                         {TASK_PRIORITY_LABELS[task.priority]}
                       </span>
                       {task.heldByAgentId !== null && <span>Agent 持有中</span>}
+                      {isLaunchable(task, launcher?.agent?.id ?? null) && (
+                        <button
+                          type="button"
+                          onClick={() => void launchTask(task.id)}
+                          disabled={!launcher || launchingId === task.id}
+                          title={
+                            launcher
+                              ? '在本机开 Terminal 跑 claude 执行此任务'
+                              : '本地执行器未运行（npm run launcher）'
+                          }
+                          className="ml-auto rounded bg-neutral-900 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-neutral-700 disabled:cursor-not-allowed disabled:bg-neutral-300"
+                        >
+                          {launchingId === task.id ? '启动中…' : '▷ 启动'}
+                        </button>
+                      )}
                     </div>
                   </article>
                 ))}

@@ -9,8 +9,9 @@ ADR-0002 修订（2026-08）的落地：看板服务器始终是被动的协作�
 ## 一次启动的完整链路
 
 ```text
-看板待办卡片 [启动] 按钮
-  └─ POST http://127.0.0.1:7642/launch {taskId}     （浏览器 → 本机启动器，跨过看板服务器）
+看板待办卡片 [▷ 启动] 按钮（仅可认领任务：未指派或指派给启动器绑定的 Agent）
+  ├─ 页面周期探测 GET /health → { ok, apiBase, agent }   （不通 → 按钮置灰「本地执行器未运行」）
+  └─ 点击 → POST http://127.0.0.1:7642/launch {taskId}   （浏览器 → 本机启动器，跨过看板服务器）
        ├─ GET  /api/agent/tasks/:id                  读任务（标题、执行目录型）
        ├─ 准备执行目录（见下）
        ├─ POST /api/agent/tasks/:id/claim            原子预认领：待办 → 进行中（防双抢）
@@ -18,6 +19,9 @@ ADR-0002 修订（2026-08）的落地：看板服务器始终是被动的协作�
        ├─ osascript 开 Terminal 跑交互式 claude      （可观看、可插话）
        └─ 终端没起来 → POST /release 立即释放，任务还回待办（T13）
 ```
+
+`/health` 的 `agent` 字段来自 `GET /api/agent/me`（token → 身份，懒解析缓存）：看板据此只给
+「未指派 / 指派给该 Agent」的待办任务亮按钮；token 无效时降级 `agent: null`，守护进程仍健康。
 
 ## 执行目录（CONTEXT.md「执行目录」三型）
 
@@ -55,7 +59,21 @@ npm run launcher
 #   board  : http://localhost:3000 (allowed origin: http://localhost:3000)
 ```
 
-健康检查：`curl http://127.0.0.1:7642/health` → `{"ok":true,...}`（看板按钮用它探测启动器是否在线）。
+健康检查：`curl http://127.0.0.1:7642/health` → `{"ok":true,...,"agent":{...}}`（看板按钮用它探测启动器是否在线、判定哪些任务可启动）。
+
+> 看板页面默认连 `http://127.0.0.1:7642`，可用 `NEXT_PUBLIC_TASKBOARD_LAUNCHER_URL` 覆盖。
+> 看板经 HTTPS 访问时属混合内容场景：需启动器侧设 `TASKBOARD_ALLOWED_ORIGIN` 为看板来源
+> （CORS 响应头已内置），且浏览器需允许 localhost 回环请求。
+
+## 真实联调演示
+
+```bash
+npm run launch:demo
+```
+
+进程内起真实 launcher server + 真实 TaskboardClient，Terminal 用假 `claude` 替身
+（`scripts/launch-demo-agent.mjs`，按注入的 `--mcp-config` 走真实 stdio MCP 完成协议），
+全程断言 worktree/分支/预认领/验收闭环——不开真终端、不消耗 claude 额度。
 
 ## claude 收到的首条指令
 

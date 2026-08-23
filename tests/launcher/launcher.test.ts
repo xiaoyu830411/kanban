@@ -37,6 +37,7 @@ interface StubTask {
 }
 
 interface StubClient {
+  me(): Promise<{ agent: { id: number; name: string } | null }>;
   taskDetail(taskId: number): Promise<{ task: StubTask }>;
   claimTask(taskId: number): Promise<unknown>;
   releaseTask(taskId: number): Promise<unknown>;
@@ -45,9 +46,13 @@ interface StubClient {
 function stubClient(
   task: StubTask,
   calls: { claimed: number[]; released: number[]; detailed: number[] },
-  opts: { claimError?: ApiCallError } = {},
+  opts: { claimError?: ApiCallError; meThrows?: boolean } = {},
 ): StubClient {
   return {
+    async me() {
+      if (opts.meThrows) throw new ApiCallError(401, 'agent_auth_required', 'invalid token');
+      return { agent: { id: 42, name: 'launcher-agent' } };
+    },
     async taskDetail(taskId) {
       calls.detailed.push(taskId);
       return { task };
@@ -361,11 +366,37 @@ describe('HTTP 面（仅 127.0.0.1 语义 + Origin 校验 + CORS）', () => {
     await new Promise<void>((resolve) => launcher.close(() => resolve()));
   });
 
-  it('GET /health → ok + CORS 头', async () => {
+  it('GET /health → ok + 绑定 Agent + CORS 头', async () => {
     const response = await fetch(`${base}/health`);
     expect(response.status).toBe(200);
     expect(response.headers.get('access-control-allow-origin')).toBe('http://localhost:3000');
-    await expect(response.json()).resolves.toMatchObject({ ok: true });
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      apiBase: 'http://localhost:3000',
+      agent: { id: 42, name: 'launcher-agent' },
+    });
+  });
+
+  it('/health 在 token 无效时仍健康（agent=null 降级，下次再试）', async () => {
+    const degraded = createLauncherServer({
+      client: stubClient(
+        { id: 502, title: 't', column: 'todo', executionType: 'tmp', executionTarget: null },
+        { claimed: [], released: [], detailed: [] },
+        { meThrows: true },
+      ),
+      config,
+      spawnTerminal: async () => {},
+    });
+    await new Promise<void>((resolve) => degraded.listen(0, '127.0.0.1', resolve));
+    const port = (degraded.address() as AddressInfo).port;
+    try {
+      const first = await fetch(`http://127.0.0.1:${port}/health`);
+      await expect(first.json()).resolves.toMatchObject({ ok: true, agent: null });
+      const second = await fetch(`http://127.0.0.1:${port}/health`);
+      await expect(second.json()).resolves.toMatchObject({ ok: true, agent: null });
+    } finally {
+      await new Promise<void>((resolve) => degraded.close(() => resolve()));
+    }
   });
 
   it('OPTIONS 预检 → 204', async () => {

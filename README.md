@@ -5,7 +5,7 @@
 - 领域词汇与概念边界见 [CONTEXT.md](CONTEXT.md)
 - 架构决策见 [docs/adr/](docs/adr/)
 - Agent 侧 MCP 接入（Claude Code）：[docs/agents/mcp.md](docs/agents/mcp.md)
-- 本地启动器（看板一键启动 Claude 执行任务）：[docs/agents/launcher.md](docs/agents/launcher.md)，`npm run launcher`
+- 本地启动器（看板一键启动 Claude 执行任务）：[docs/agents/launcher.md](docs/agents/launcher.md)，`npm run launcher`；联调演示 `npm run launch:demo`
 - 飞书扫码登录配置向导：`npm run feishu:setup`（[docs/agents/feishu-setup.md](docs/agents/feishu-setup.md)）
 - 技术栈：Next.js（App Router）+ TypeScript + Drizzle ORM + MySQL + Tailwind CSS，插件内核见 ADR-0004
 

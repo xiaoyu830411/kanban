@@ -304,8 +304,24 @@ function sendJson(res, config, status, payload) {
 }
 
 export function createLauncherServer({ client, config, spawnTerminal }) {
+  // 绑定 Agent 身份懒解析 + 缓存：/health 上报给看板按钮判定「指派给自己」。
+  // 看板/token 无效时降级为 null，守护进程本身仍健康。
+  let boundAgent = null;
+  let resolved = false;
+  const resolveBoundAgent = async () => {
+    if (resolved) return boundAgent;
+    try {
+      const { agent } = await client.me();
+      boundAgent = agent ?? null;
+      resolved = true;
+    } catch {
+      boundAgent = null; // 下次 /health 再试
+    }
+    return boundAgent;
+  };
+  const state = { resolveBoundAgent };
   return createServer((req, res) => {
-    void handle(client, config, spawnTerminal, req, res).catch((error) => {
+    void handle(client, config, spawnTerminal, state, req, res).catch((error) => {
       const status = error instanceof LauncherError ? error.status : 500;
       const code = error instanceof LauncherError ? error.code : 'launcher_error';
       if (!(error instanceof LauncherError)) {
@@ -316,7 +332,7 @@ export function createLauncherServer({ client, config, spawnTerminal }) {
   });
 }
 
-async function handle(client, config, spawnTerminal, req, res) {
+async function handle(client, config, spawnTerminal, state, req, res) {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, corsHeaders(config));
     res.end();
@@ -331,7 +347,8 @@ async function handle(client, config, spawnTerminal, req, res) {
 
   const url = new URL(req.url ?? '/', 'http://127.0.0.1');
   if (req.method === 'GET' && url.pathname === '/health') {
-    sendJson(res, config, 200, { ok: true, apiBase: config.apiBase });
+    const agent = await state.resolveBoundAgent();
+    sendJson(res, config, 200, { ok: true, apiBase: config.apiBase, agent });
     return;
   }
   if (req.method === 'POST' && url.pathname === '/launch') {

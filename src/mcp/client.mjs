@@ -57,6 +57,10 @@ export class TaskboardClient {
     return this.request('GET', '/api/agent/tasks');
   }
 
+  me() {
+    return this.request('GET', '/api/agent/me');
+  }
+
   taskDetail(taskId) {
     return this.request('GET', `/api/agent/tasks/${taskId}`);
   }
