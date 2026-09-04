@@ -1,6 +1,12 @@
-import { mysqlTable, varchar, timestamp, int, mysqlEnum, json, text, boolean } from 'drizzle-orm/mysql-core';
+import { mysqlTable, varchar, timestamp, int, mysqlEnum, json, text, boolean, uniqueIndex } from 'drizzle-orm/mysql-core';
 import { BOARD_COLUMNS } from '@/server/kernel/board-columns';
-import { TASK_EXECUTION_TYPES, TASK_PRIORITIES } from '@/server/kernel/task-meta';
+import {
+  AGENT_TYPES,
+  RUN_ORIGINS,
+  RUN_STATUSES,
+  TASK_EXECUTION_TYPES,
+  TASK_PRIORITIES,
+} from '@/server/kernel/task-meta';
 
 export { TASK_PRIORITIES, TASK_EXECUTION_TYPES };
 export type { TaskPriority, TaskExecutionType } from '@/server/kernel/task-meta';
@@ -145,3 +151,46 @@ export type Agent = typeof agents.$inferSelect;
 export type TaskDodItem = typeof taskDodItems.$inferSelect;
 export type TaskComment = typeof taskComments.$inferSelect;
 export type SystemPing = typeof systemPings.$inferSelect;
+
+/**
+ * 执行观察档案（CONTEXT.md「执行/登记」，ADR-0005）：一次 Run 的观察记录，
+ * (agentType, sessionId) 唯一——观察者重复登记/上报按会话定位同一 Run。
+ * revertible 标记「空闲转完结」进待验收的卡允许被后续活跃观察拉回进行中；
+ * 声明驱动的待验收不回退（列迁移听声明，Run 终止听观察）。
+ */
+export const taskRuns = mysqlTable(
+  'task_runs',
+  {
+    id: int('id').autoincrement().primaryKey(),
+    taskId: int('task_id')
+      .notNull()
+      .references(() => tasks.id),
+    agentId: int('agent_id')
+      .notNull()
+      .references(() => agents.id),
+    origin: mysqlEnum('origin', [...RUN_ORIGINS]).notNull(),
+    agentType: mysqlEnum('agent_type', [...AGENT_TYPES]).notNull().default('claude_code'),
+    sessionId: varchar('session_id', { length: 64 }).notNull(),
+    cwd: varchar('cwd', { length: 500 }).notNull(),
+    status: mysqlEnum('status', [...RUN_STATUSES]).notNull().default('running'),
+    /** 终态原因（观察者上报）：process_gone / idle_timeout / graceful 等。 */
+    endCause: varchar('end_cause', { length: 64 }),
+    /** 最后一条 assistant 的 stop_reason 快照（tool_use / end_turn）。 */
+    stopReason: varchar('stop_reason', { length: 32 }),
+    /** 转录最后条目时间（停更判定基准，ADR-0005；无效输入静默置 NULL）。 */
+    lastEntryAt: timestamp('last_entry_at', { fsp: 3 }),
+    /** ai-title 是否已补写任务标题（只补一次）。 */
+    titleApplied: boolean('title_applied').notNull().default(false),
+    /** 进待验收是否由观察触发（只有这类卡允许观察回退）。 */
+    revertible: boolean('revertible').notNull().default(false),
+    /** 登记时的 git 基线（HEAD sha；非 git 目录为 NULL）。 */
+    gitBaseline: varchar('git_baseline', { length: 64 }),
+    /** 终态时采集的改动文件清单（git status 级）。 */
+    changedFiles: json('changed_files').$type<string[]>().notNull().default([]),
+    createdAt: timestamp('created_at', { fsp: 3 }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex('uq_task_runs_agent_session').on(table.agentType, table.sessionId)],
+);
+
+export type TaskRun = typeof taskRuns.$inferSelect;

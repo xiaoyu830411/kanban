@@ -64,6 +64,13 @@
       "when": 1787484972958,
       "tag": "0008_strong_maggott",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1788514983448,
+      "tag": "0009_elite_daredevil",
+      "breakpoints": true
     }
   ]
 }

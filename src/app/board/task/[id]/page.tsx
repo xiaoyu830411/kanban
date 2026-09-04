@@ -7,7 +7,13 @@ import { requireOwnTask } from '@/server/kernel/tasks';
 import { listDodItems } from '@/server/kernel/dod';
 import { listTaskComments } from '@/server/kernel/comments';
 import { BOARD_COLUMN_LABELS } from '@/server/kernel/board-columns';
-import { TASK_EXECUTION_TYPE_LABELS, TASK_PRIORITY_LABELS } from '@/server/kernel/task-meta';
+import {
+  END_CAUSE_LABELS,
+  RUN_STATUS_LABELS,
+  TASK_EXECUTION_TYPE_LABELS,
+  TASK_PRIORITY_LABELS,
+} from '@/server/kernel/task-meta';
+import { getLatestRunsForTasks } from '@/server/kernel/runs';
 import { ProtocolError } from '@/server/kernel/protocol';
 import TaskActions from './task-actions';
 import EditTaskButton from './edit-task-button';
@@ -47,13 +53,15 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
     throw error;
   });
 
-  const [dod, comments, agents, activity] = await Promise.all([
+  const [dod, comments, agents, activity, runs] = await Promise.all([
     listDodItems(task.id),
     listTaskComments(task.id),
     listAgentsByOwner(member.id),
     listTaskActivity(task.id),
+    getLatestRunsForTasks([task.id]),
   ]);
   const agentNames = new Map(agents.map((agent) => [agent.id, agent.name]));
+  const run = runs.get(task.id) ?? null;
 
   return (
     <div className="mx-auto flex min-h-screen max-w-3xl flex-col gap-6 p-8">
@@ -100,6 +108,44 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
 
         <TaskActions taskId={task.id} column={task.column} />
       </section>
+
+      {run && (
+        <section className="rounded-lg border border-neutral-200 bg-white p-5">
+          <h2 className="mb-3 text-sm font-medium text-neutral-600">执行观察</h2>
+          <div className="flex flex-col gap-1 text-sm text-neutral-700">
+            <p>
+              状态：{RUN_STATUS_LABELS[run.status]}
+              <span className="ml-2 text-xs text-neutral-400">
+                {run.origin === 'registered' ? '登记会话' : '启动器执行'} · {run.agentType}
+              </span>
+              {run.endCause && (
+                <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700">
+                  {END_CAUSE_LABELS[run.endCause] ?? run.endCause}
+                </span>
+              )}
+            </p>
+            {run.lastEntryAt && (
+              <p className="text-xs text-neutral-500">
+                会话最后条目：{run.lastEntryAt.toLocaleString('zh-CN')}
+              </p>
+            )}
+            <p className="font-mono text-xs text-neutral-400">
+              会话 {run.sessionId}
+              {run.gitBaseline ? ` · 基线 ${run.gitBaseline.slice(0, 8)}` : ''}
+            </p>
+            {run.changedFiles.length > 0 && (
+              <div className="mt-2">
+                <p className="text-xs font-medium text-neutral-500">终态改动清单（验收参考）：</p>
+                <ul className="mt-1 flex flex-col gap-0.5 font-mono text-xs text-neutral-600">
+                  {run.changedFiles.map((file) => (
+                    <li key={file}>{file}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       <section className="rounded-lg border border-neutral-200 bg-white p-5">
         <h2 className="mb-3 text-sm font-medium text-neutral-600">验收清单（DoD）</h2>

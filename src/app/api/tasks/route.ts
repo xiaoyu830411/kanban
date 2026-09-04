@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { handleRoute, parseJsonBody, requireMember } from '@/server/http';
+import { getLatestRunsForTasks, toRunBadge } from '@/server/kernel/runs';
 import {
   createTask,
   listTasks,
@@ -29,7 +30,14 @@ export async function GET(request: Request) {
         : undefined,
       label,
     });
-    return NextResponse.json({ tasks: tasks.map(toPublicTask) });
+    // 徽标摘要（ADR-0005）：最新 Run 状态逐卡附带
+    const runs = await getLatestRunsForTasks(tasks.map((task) => task.id));
+    return NextResponse.json({
+      tasks: tasks.map((task) => ({
+        ...toPublicTask(task),
+        run: runs.has(task.id) ? toRunBadge(runs.get(task.id)!) : null,
+      })),
+    });
   });
 }
 

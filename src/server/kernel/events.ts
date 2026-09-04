@@ -1,4 +1,5 @@
 import type { BoardColumn } from './board-columns';
+import type { RunOrigin, RunStatus } from './task-meta';
 
 /**
  * 领域事件命名契约——内核的公共契约（ADR-0004）。
@@ -26,6 +27,8 @@ export const DOMAIN_EVENT_NAMES = [
   'task.comment_added',
   'task.accepted',
   'task.rejected',
+  'task.registered',
+  'task.run_state_changed',
 ] as const;
 
 export type DomainEventName = (typeof DOMAIN_EVENT_NAMES)[number];
@@ -43,6 +46,27 @@ export interface DomainEventMap {
   'task.comment_added': { taskId: number; commentId: number; actor: Actor };
   'task.accepted': { taskId: number; actor: Actor };
   'task.rejected': { taskId: number; actor: Actor };
+  /** 登记建卡（ADR-0005）：外部会话生而为进行中。 */
+  'task.registered': {
+    taskId: number;
+    workspaceId: number;
+    runId: number;
+    sessionId: string;
+    cwd: string;
+    origin: RunOrigin;
+    actor: Actor;
+  };
+  /** Run 观察状态变化（ADR-0005）：仅在状态实际变更时发布（防观察者抖动刷屏）。 */
+  'task.run_state_changed': {
+    taskId: number;
+    workspaceId: number;
+    runId: number;
+    sessionId: string;
+    status: RunStatus;
+    previousStatus: RunStatus;
+    endCause: string | null;
+    actor: Actor;
+  };
 }
 
 export interface DomainEvent<K extends DomainEventName = DomainEventName> {

@@ -92,4 +92,18 @@ export class TaskboardClient {
   checkDod(taskId, itemId, evidence) {
     return this.request('PATCH', `/api/agent/tasks/${taskId}/dod/${itemId}/check`, { evidence });
   }
+
+  // ---- 观察上报（ADR-0005；观察器=launcher，域规则在服务端 kernel/runs.ts） ----
+
+  registerObservation(input) {
+    return this.request('POST', '/api/agent/observations/register', input);
+  }
+
+  reportObservation(input) {
+    return this.request('POST', '/api/agent/observations/report', input);
+  }
+
+  bindObservation(input) {
+    return this.request('POST', '/api/agent/observations/bind', input);
+  }
 }

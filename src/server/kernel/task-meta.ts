@@ -25,3 +25,29 @@ export const TASK_EXECUTION_TYPE_LABELS: Record<TaskExecutionType, string> = {
   dir: '指定目录',
   repo: 'Git 仓库',
 };
+
+/** 执行观察状态（CONTEXT.md「执行/登记」，ADR-0005）：由观察推导的 Run 状态。 */
+export const RUN_STATUSES = ['running', 'idle', 'finished', 'interrupted'] as const;
+export type RunStatus = (typeof RUN_STATUSES)[number];
+
+export const RUN_STATUS_LABELS: Record<RunStatus, string> = {
+  running: '运行中',
+  idle: '空闲',
+  finished: '已完结',
+  interrupted: '已中断',
+};
+
+/** Run 起源：registered=外部会话登记（ADR-0005）、launched=启动器拉起后绑定。 */
+export const RUN_ORIGINS = ['registered', 'launched'] as const;
+export type RunOrigin = (typeof RUN_ORIGINS)[number];
+
+/** 观察的 agent 类型（适配器键，ADR-0005：v1 仅 claude code）。 */
+export const AGENT_TYPES = ['claude_code', 'codex'] as const;
+export type AgentType = (typeof AGENT_TYPES)[number];
+
+/** 终态原因标签（观察者上报的 endCause，ADR-0005）；未知原因原样展示。 */
+export const END_CAUSE_LABELS: Record<string, string> = {
+  graceful: '会话正常退出',
+  process_gone: '进程消失',
+  idle_timeout: '空闲超时',
+};

@@ -8,8 +8,10 @@ import {
   type BoardColumn,
 } from '@/server/kernel/board-columns';
 import {
+  RUN_STATUS_LABELS,
   TASK_PRIORITIES,
   TASK_PRIORITY_LABELS,
+  type RunStatus,
   type TaskExecutionType,
   type TaskPriority,
 } from '@/server/kernel/task-meta';
@@ -32,6 +34,8 @@ export interface BoardTask {
   executionType: TaskExecutionType;
   executionTarget: string | null;
   heldByAgentId: number | null;
+  /** 最新 Run 徽标摘要（ADR-0005）；无观察记录为 null。 */
+  run?: { status: RunStatus; origin: 'registered' | 'launched'; endCause: string | null } | null;
 }
 
 interface Props {
@@ -326,6 +330,26 @@ export default function BoardView({ initialTasks, agents }: Props) {
                         {TASK_PRIORITY_LABELS[task.priority]}
                       </span>
                       {task.heldByAgentId !== null && <span>Agent 持有中</span>}
+                      {task.run?.origin === 'registered' && task.column === 'in_progress' && (
+                        <span className="rounded bg-neutral-100 px-1.5 py-0.5">登记</span>
+                      )}
+                      {task.run && task.column === 'in_progress' && (
+                        <span
+                          className={
+                            task.run.status === 'running'
+                              ? 'text-emerald-600'
+                              : task.run.status === 'idle'
+                                ? 'text-neutral-400'
+                                : ''
+                          }
+                        >
+                          {task.run.status === 'running' ? '🟢' : task.run.status === 'idle' ? '💤' : '•'}{' '}
+                          {RUN_STATUS_LABELS[task.run.status]}
+                        </span>
+                      )}
+                      {task.run?.status === 'interrupted' && (
+                        <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-700">⚠️ 已中断</span>
+                      )}
                       {isLaunchable(task, launcher?.agent?.id ?? null) && (
                         <button
                           type="button"

@@ -14,6 +14,10 @@
  *   TASKBOARD_TMP_ROOT         临时目录型任务的根目录（默认系统 /tmp）
  *   TASKBOARD_WORKTREE_ROOT    worktree 根（默认 ~/.taskboard/worktrees）
  *   TASKBOARD_REPO_CACHE_ROOT  仓库缓存克隆根（默认 ~/.taskboard/repos）
+ *   TASKBOARD_WATCH_PATHS      会话登记白名单（cwd 列表，逗号/冒号分隔；默认空=不登记）
+ *   TASKBOARD_WATCH_INTERVAL   观察轮询间隔 ms（默认 5000）
+ *   TASKBOARD_WATCH_IDLE_TIMEOUT 空闲转完结阈值 ms（默认 1800000=30 分钟）
+ *   TASKBOARD_CLAUDE_DIR       claude 转录根目录（默认 ~/.claude/projects）
  *
  * 启动：node scripts/launcher.mjs（或 npm run launcher）
  */
@@ -33,6 +37,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { ApiCallError, TaskboardClient } from '../src/mcp/client.mjs';
+import { createAliveChecker, createLaunchRegistry, createObserver } from './observer.mjs';
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -61,6 +66,15 @@ export function resolveConfig(env = /** @type {Record<string, string | undefined
       env.TASKBOARD_WORKTREE_ROOT ?? path.join(os.homedir(), '.taskboard', 'worktrees'),
     repoCacheRoot:
       env.TASKBOARD_REPO_CACHE_ROOT ?? path.join(os.homedir(), '.taskboard', 'repos'),
+    // 观察器（ADR-0005）：白名单项目的新会话登记建卡；空闲/终态判定见 observer.mjs
+    watchPaths: (env.TASKBOARD_WATCH_PATHS ?? '')
+      .split(/[:,]/)
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+    watchIntervalMs: Number(env.TASKBOARD_WATCH_INTERVAL ?? 5000),
+    idleTimeoutMs: Number(env.TASKBOARD_WATCH_IDLE_TIMEOUT ?? 30 * 60_000),
+    claudeProjectsDir:
+      env.TASKBOARD_CLAUDE_DIR ?? path.join(os.homedir(), '.claude', 'projects'),
   };
 }
 
@@ -362,7 +376,10 @@ export async function spawnTerminalDefault(scriptPath) {
  * 完整启动流程：读任务 → 备目录 → 预认领（原子防双抢）→ 开终端跑 claude。
  * spawn 失败 → 立即释放（T13），把任务还回待办。
  */
-export async function launchTask(taskId, { client, config, spawnTerminal = spawnTerminalDefault }) {
+export async function launchTask(
+  taskId,
+  { client, config, spawnTerminal = spawnTerminalDefault, launches = null },
+) {
   let task;
   try {
     const detail = await client.taskDetail(taskId);
@@ -422,6 +439,8 @@ export async function launchTask(taskId, { client, config, spawnTerminal = spawn
       ].join('\n'),
     );
     await spawnTerminal(scriptPath);
+    // 观察器待绑定：转录出现在 workdir 项目目录时自动绑成 launched Run（ADR-0005）
+    if (workdir) launches?.add(workdir, taskId);
     console.log(
       `[launcher] task #${taskId} launched: workdir=${workdir ?? '-'} script=${scriptPath}`,
     );
@@ -462,7 +481,7 @@ function sendJson(res, config, status, payload) {
   res.end(body);
 }
 
-export function createLauncherServer({ client, config, spawnTerminal }) {
+export function createLauncherServer({ client, config, spawnTerminal, launches = null }) {
   // 绑定 Agent 身份懒解析 + 缓存：/health 上报给看板按钮判定「指派给自己」。
   // 看板/token 无效时降级为 null，守护进程本身仍健康。
   let boundAgent = null;
@@ -480,7 +499,7 @@ export function createLauncherServer({ client, config, spawnTerminal }) {
   };
   const state = { resolveBoundAgent };
   return createServer((req, res) => {
-    void handle(client, config, spawnTerminal, state, req, res).catch((error) => {
+    void handle(client, config, spawnTerminal, launches, state, req, res).catch((error) => {
       // 看板协议错误（claim_conflict / not_claimable…）原样透传；其余按启动器内部错误
       const isProtocol = error instanceof LauncherError || error instanceof ApiCallError;
       const status = isProtocol ? error.status : 500;
@@ -493,7 +512,7 @@ export function createLauncherServer({ client, config, spawnTerminal }) {
   });
 }
 
-async function handle(client, config, spawnTerminal, state, req, res) {
+async function handle(client, config, spawnTerminal, launches, state, req, res) {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, corsHeaders(config));
     res.end();
@@ -523,7 +542,7 @@ async function handle(client, config, spawnTerminal, state, req, res) {
     if (!Number.isInteger(taskId) || taskId <= 0) {
       throw new LauncherError('invalid_request', 'taskId must be a positive integer');
     }
-    const result = await launchTask(taskId, { client, config, spawnTerminal });
+    const result = await launchTask(taskId, { client, config, spawnTerminal, launches });
     sendJson(res, config, 200, { ok: true, ...result });
     return;
   }
@@ -564,12 +583,15 @@ async function main() {
     console.warn('[launcher] startup gc failed (continuing):', error.message);
   });
 
-  const server = createLauncherServer({ client, config });
+  const launches = createLaunchRegistry();
+  const observer = createObserver({ client, config, launches, aliveCheck: createAliveChecker() });
+  const server = createLauncherServer({ client, config, launches });
   server.listen(config.port, '127.0.0.1', () => {
     console.log(`taskboard launcher ready:`);
     console.log(`  health : http://127.0.0.1:${config.port}/health`);
     console.log(`  board  : ${config.apiBase} (allowed origin: ${config.allowedOrigin})`);
     console.log(`  git    : worktrees=${config.worktreeRoot} repo-cache=${config.repoCacheRoot}`);
+    observer.start();
   });
 }
 

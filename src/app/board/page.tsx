@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { SESSION_COOKIE, resolveSessionToken } from '@/server/kernel/sessions';
 import { ensureMySpace } from '@/server/kernel/workspaces';
 import { listTasks } from '@/server/kernel/tasks';
+import { getLatestRunsForTasks, toRunBadge } from '@/server/kernel/runs';
 import { listAgentsByOwner } from '@/server/kernel/agents';
 import BoardView from './board-view';
 import LogoutButton from './logout-button';
@@ -17,6 +18,7 @@ export default async function BoardPage() {
 
   const workspace = await ensureMySpace(member.id);
   const [tasks, agents] = await Promise.all([listTasks(workspace.id), listAgentsByOwner(member.id)]);
+  const runs = await getLatestRunsForTasks(tasks.map((task) => task.id));
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -53,6 +55,7 @@ export default async function BoardPage() {
             executionType: task.executionType,
             executionTarget: task.executionTarget,
             heldByAgentId: task.heldByAgentId,
+            run: runs.has(task.id) ? toRunBadge(runs.get(task.id)!) : null,
           }))}
         />
       </main>

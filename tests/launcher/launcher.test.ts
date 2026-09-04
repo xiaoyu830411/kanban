@@ -89,10 +89,8 @@ let config: ReturnType<typeof resolveConfig>;
 beforeAll(() => {
   root = mkdtempSync(path.join(os.tmpdir(), 'taskboard-launcher-test-'));
   config = {
-    token: 'kbt_test_token',
-    apiBase: 'http://localhost:3000',
+    ...resolveConfig({ TASKBOARD_TOKEN: 'kbt_test_token' }),
     port: 0,
-    allowedOrigin: 'http://localhost:3000',
     tmpRoot: path.join(root, 'tmp'),
     worktreeRoot: path.join(root, 'worktrees'),
     repoCacheRoot: path.join(root, 'repos'),
@@ -110,6 +108,10 @@ describe('resolveConfig', () => {
     expect(defaults.apiBase).toBe('http://localhost:3000');
     expect(defaults.allowedOrigin).toBe('http://localhost:3000');
     expect(defaults.port).toBe(7642);
+    // 观察器缺省（ADR-0005）：白名单空=不登记，5s 轮询，30 分钟空闲转完结
+    expect(defaults.watchPaths).toEqual([]);
+    expect(defaults.watchIntervalMs).toBe(5000);
+    expect(defaults.idleTimeoutMs).toBe(30 * 60_000);
 
     const custom = resolveConfig({
       TASKBOARD_API_BASE: 'http://192.168.1.5:3000/',
