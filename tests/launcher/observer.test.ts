@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -9,6 +9,7 @@ import {
   deriveHeadSnapshot,
   deriveTailSnapshot,
   parseJsonlLines,
+  territoryTaskId,
 } from '../../scripts/observer.mjs';
 
 const harnessRoots: string[] = [];
@@ -112,8 +113,14 @@ interface CallLog {
 
 function fakeClient() {
   const calls: CallLog = { register: [], report: [], bind: [] };
+  /** 领土恢复查任务详情用（#24）；未编程的任务按「待办未持有」返回。 */
+  const taskDetails: Record<number, { column: string; heldByAgentId: number | null }> = {};
   return {
     calls,
+    taskDetails,
+    async taskDetail(taskId: number) {
+      return { task: { id: taskId, ...(taskDetails[taskId] ?? { column: 'todo', heldByAgentId: null }) } };
+    },
     async registerObservation(input: Record<string, unknown>) {
       calls.register.push(input);
       return { task: { id: 100 + calls.register.length }, run: { status: 'running' }, existing: false };
@@ -143,6 +150,8 @@ function makeHarness(watchPaths: string[], launches = createLaunchRegistry()) {
       watchIntervalMs: 60_000,
       idleTimeoutMs: 30 * 60_000,
       claudeProjectsDir: harnessRoot,
+      worktreeRoot: '/wt-root',
+      tmpRoot: '/tmp-root',
     },
     launches,
     aliveCheck: async (cwd: string) => alive[cwd] ?? false,
@@ -158,8 +167,9 @@ function makeHarness(watchPaths: string[], launches = createLaunchRegistry()) {
 }
 
 describe('createObserver（登记 / 排除 / 绑定 / 状态流转）', () => {
-  it('白名单新会话 → 登记建卡（标题=首 prompt）；非白名单 → 永久排除', async () => {
-    const { client, observer, file } = makeHarness(['/work/proj']);
+  it('白名单（可选限制器）命中 + 存活 → 登记；非白名单 → 永久排除', async () => {
+    const { client, alive, observer, file } = makeHarness(['/work/proj']);
+    alive['/work/proj'] = true;
     appendFileSync(
       file('proj-a', 'sess-r1'),
       JSON.stringify({ type: 'user', message: { content: '帮我修登录 bug' }, cwd: '/work/proj', timestamp: '2026-09-04T10:00:00Z' }) + '\n',
@@ -182,6 +192,64 @@ describe('createObserver（登记 / 排除 / 绑定 / 状态流转）', () => {
 
     await observer.tick(); // 排除不重试
     expect(client.calls.register).toHaveLength(1);
+  });
+
+  it('缺省全量（#24）：存活会话全部登记；死会话不登记且不再重试', async () => {
+    const { client, alive, observer, file } = makeHarness([]);
+    alive['/any/project'] = true;
+    appendFileSync(
+      file('proj-x', 'sess-live'),
+      JSON.stringify({ type: 'user', message: { content: '任意项目' }, cwd: '/any/project' }) + '\n',
+    );
+    appendFileSync(
+      file('proj-y', 'sess-dead'),
+      JSON.stringify({ type: 'user', message: { content: '已死的会话' }, cwd: '/dead/project' }) + '\n',
+    );
+
+    await observer.tick();
+    expect(client.calls.register).toHaveLength(1);
+    expect(client.calls.register[0]).toMatchObject({ sessionId: 'sess-live', cwd: '/any/project' });
+
+    await observer.tick(); // 死会话已排除：不因存活探测缓存过期而重试
+    expect(client.calls.register).toHaveLength(1);
+  });
+
+  it('启动器领土（#24）：workdir 会话恢复绑定而非登记；任务不再持有时排除', async () => {
+    expect(territoryTaskId('/wt-root/77', { worktreeRoot: '/wt-root', tmpRoot: '/tmp-root' })).toBe(77);
+    expect(territoryTaskId('/tmp-root/taskboard-88/sub', { worktreeRoot: '/wt-root', tmpRoot: '/tmp-root' })).toBe(88);
+    expect(territoryTaskId('/normal/project', { worktreeRoot: '/wt-root', tmpRoot: '/tmp-root' })).toBeNull();
+
+    const { client, observer, file } = makeHarness([]);
+    client.taskDetails[77] = { column: 'in_progress', heldByAgentId: 5 };
+    client.taskDetails[78] = { column: 'todo', heldByAgentId: null };
+    appendFileSync(
+      file('proj-w', 'sess-t1'),
+      JSON.stringify({ type: 'user', message: { content: '现场会话' }, cwd: '/wt-root/77' }) + '\n',
+    );
+    appendFileSync(
+      file('proj-w', 'sess-t2'),
+      JSON.stringify({ type: 'user', message: { content: '已释放的现场' }, cwd: '/wt-root/78' }) + '\n',
+    );
+
+    await observer.tick();
+    expect(client.calls.bind).toHaveLength(1);
+    expect(client.calls.bind[0]).toMatchObject({ taskId: 77, sessionId: 'sess-t1' });
+    expect(client.calls.register).toHaveLength(0); // 领土不登记新卡
+
+    await observer.tick(); // 78 号排除后不再重试
+    expect(client.calls.bind).toHaveLength(1);
+  });
+
+  it('静默超过 24h 的历史转录连读都不读（不登记）', async () => {
+    const { client, alive, observer, file } = makeHarness([]);
+    alive['/ancient'] = true; // 即便探测说活（不可能）也不该走到这一步
+    const stale = file('proj-old', 'sess-ancient');
+    appendFileSync(stale, JSON.stringify({ type: 'user', message: { content: '上古会话' }, cwd: '/ancient' }) + '\n');
+    const dayAgo = new Date(1_000_000_000_000 - 25 * 60 * 60_000); // 相对假时钟（now 被注入）
+    utimesSync(stale, dayAgo, dayAgo);
+
+    await observer.tick();
+    expect(client.calls.register).toHaveLength(0);
   });
 
   it('pending workdir 命中 → 绑定 launched Run（优先于白名单）', async () => {

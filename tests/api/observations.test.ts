@@ -216,6 +216,30 @@ describe('观察登记（ADR-0005）', () => {
     expect(done.task.heldByAgentId).not.toBeNull();
   });
 
+  it('登记去重（#24）：cwd 已有进行中 dir 任务 → Run 挂到既有任务，不建新卡', async () => {
+    const { cookie, memberId } = await login('owner9');
+    const token = await newAgent(memberId, 'claude-code');
+    const taskId = await newTaskAt(
+      cookie,
+      { title: '现场任务', executionType: 'dir', executionTarget: '/tmp/dedup' },
+      'todo',
+    );
+    await claimTaskRoute(
+      apiRequest(`/api/agent/tasks/${taskId}/claim`, { body: {}, headers: bearer(token) }),
+      { params: Promise.resolve({ id: String(taskId) }) },
+    );
+
+    const first = await register(token, { sessionId: 'sess-d1', cwd: '/tmp/dedup', title: '现场会话' });
+    expect(first.status).toBe(201);
+    const body = (await first.json()) as { task: { id: number; column: string } };
+    expect(body.task.id).toBe(taskId); // 挂到既有任务，未建新卡
+    expect(body.task.column).toBe('in_progress');
+
+    const second = await register(token, { sessionId: 'sess-d2', cwd: '/tmp/dedup', title: '同目录第二个会话' });
+    const body2 = (await second.json()) as { task: { id: number } };
+    expect(body2.task.id).toBe(taskId);
+  });
+
   it('done 永不被观察触碰；未知会话 404；他人 Agent 上报 403', async () => {
     const { memberId } = await login('owner8');
     const token = await newAgent(memberId, 'claude-code');

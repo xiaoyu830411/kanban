@@ -109,6 +109,50 @@ export async function registerSession(
   }
 
   const workspace = await ensureMySpace(agent.ownerId);
+
+  // 去重（#24）：该 cwd 已有进行中的 dir 型任务（如启动器现场但绑定未达）——
+  // Run 挂到既有任务，不建新卡
+  const dupe = await getDb()
+    .select()
+    .from(tasks)
+    .where(
+      and(
+        eq(tasks.workspaceId, workspace.id),
+        eq(tasks.column, 'in_progress'),
+        eq(tasks.executionType, 'dir'),
+        eq(tasks.executionTarget, cwd),
+      ),
+    )
+    .limit(1);
+  if (dupe[0]) {
+    const rows = await getDb()
+      .insert(taskRuns)
+      .values({
+        taskId: dupe[0].id,
+        agentId: agent.id,
+        origin: 'registered',
+        agentType,
+        sessionId,
+        cwd,
+        status: 'running',
+        titleApplied: true, // 挂到既有任务，不改其标题
+        gitBaseline: typeof input.gitBaseline === 'string' ? input.gitBaseline.slice(0, 64) : null,
+        lastEntryAt: parsedDate(input.lastEntryAt),
+      })
+      .$returningId();
+    const run = (await getDb().select().from(taskRuns).where(eq(taskRuns.id, rows[0].id)))[0];
+    await getEventBus().publish('task.registered', {
+      taskId: dupe[0].id,
+      workspaceId: dupe[0].workspaceId,
+      runId: run.id,
+      sessionId,
+      cwd,
+      origin: 'registered',
+      actor,
+    });
+    return { task: dupe[0], run, existing: false };
+  }
+
   const inserted = await getDb()
     .insert(tasks)
     .values({

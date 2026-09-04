@@ -30,6 +30,8 @@ const execFileAsync = promisify(execFile);
 const TAIL_BYTES = 256 * 1024;
 const HEAD_BYTES = 128 * 1024;
 const ALIVE_CACHE_MS = 30_000;
+/** 静默超过此值的历史转录连读都不读（既不存活也无新意，#24）。 */
+const STALE_FILE_MS = 24 * 60 * 60_000;
 
 /** cwd 归一化：去尾斜杠（白名单/绑定/存活比对统一口径）。 */
 export function normalizeCwd(cwd) {
@@ -188,6 +190,27 @@ export function createLaunchRegistry({ now = Date.now, ttlMs = 15 * 60_000 } = {
   };
 }
 
+// ---- 启动器领土（#24） ----
+
+/**
+ * 从 cwd 反解启动器执行现场的 taskId：worktree 根/<id> 或 tmp 根/taskboard-<id>。
+ * 返回 null 表示不在启动器领土内（普通项目目录，正常走登记）。
+ */
+export function territoryTaskId(cwd, config) {
+  const normalized = normalizeCwd(cwd);
+  const worktreeRoot = normalizeCwd(config.worktreeRoot ?? '');
+  if (worktreeRoot && normalized.startsWith(`${worktreeRoot}/`)) {
+    const segment = normalized.slice(worktreeRoot.length + 1).split('/')[0];
+    return /^\d+$/.test(segment) ? Number(segment) : null;
+  }
+  const tmpRoot = normalizeCwd(config.tmpRoot ?? '');
+  if (tmpRoot && normalized.startsWith(`${tmpRoot}/taskboard-`)) {
+    const segment = normalized.slice(tmpRoot.length + '/taskboard-'.length).split('/')[0];
+    return /^\d+$/.test(segment) ? Number(segment) : null;
+  }
+  return null;
+}
+
 // ---- git 辅助（best-effort：非 git 目录静默返回空） ----
 
 async function gitHead(cwd) {
@@ -279,16 +302,22 @@ export function createObserver({
     }
   }
 
-  /** 新转录文件收养：读头部定 cwd → 启动器绑定 > 白名单登记 > 排除。 */
+  /** 新转录文件收养（#24：全量扫描，存活门槛）：
+   *  pending 绑定 > 启动器领土（恢复绑定或排除）> 可选白名单 > 存活过滤 > 登记。 */
   async function adopt(filePath) {
     const sessionId = filePath.split('/').pop().slice(0, -6);
-    let size;
+    let stats;
     try {
-      size = (await stat(filePath)).size;
+      stats = await stat(filePath);
     } catch {
       return; // 文件消失：下轮再看
     }
-    if (size === 0) return; // 尚未写入：下轮再看
+    if (stats.size === 0) return; // 尚未写入：下轮再看
+    // 静默已久的历史转录（>24h 未动）：不存活、无新意，连读都不读
+    if (now() - stats.mtimeMs > STALE_FILE_MS) {
+      excluded.add(filePath);
+      return;
+    }
     const head = deriveHeadSnapshot(parseJsonlLines(await readHead(filePath)));
     if (!head.cwd) return; // 头部无 cwd（半行）：下轮再看
 
@@ -315,7 +344,48 @@ export function createObserver({
       return;
     }
 
-    if (!watchlist.includes(normalizeCwd(head.cwd))) {
+    // 启动器领土（#24）：worktree/tmp 现场的会话不登记成新卡——
+    // 任务仍被持有则恢复绑定（覆盖启动器重启丢 pending 的缺口），否则排除。
+    const territory = territoryTaskId(head.cwd, config);
+    if (territory != null) {
+      let bound = false;
+      try {
+        const detail = await client.taskDetail(territory);
+        if (detail?.task?.column === 'in_progress' && detail.task.heldByAgentId != null) {
+          await client.bindObservation({
+            taskId: territory,
+            sessionId,
+            agentType: 'claude_code',
+            cwd: head.cwd,
+            gitBaseline: await gitHead(head.cwd),
+          });
+          tracked.set(sessionId, {
+            sessionId,
+            filePath,
+            cwd: head.cwd,
+            origin: 'launched',
+            taskId: territory,
+            reportedStatus: 'running',
+            titleSent: true,
+          });
+          bound = true;
+          log(`[observer] recovered launched run: task #${territory} ← session ${sessionId.slice(0, 8)} @ ${head.cwd}`);
+        }
+      } catch {
+        // 任务不存在/网络失败：按排除处理
+      }
+      if (!bound) excluded.add(filePath);
+      return;
+    }
+
+    // 白名单是可选限制器（#24）：设置了才过滤，缺省观察全部
+    if (watchlist.length > 0 && !watchlist.includes(normalizeCwd(head.cwd))) {
+      excluded.add(filePath);
+      return;
+    }
+
+    // 全量模式的登记门槛：存活（死会话不上看板）
+    if (!(await aliveCheck(head.cwd))) {
       excluded.add(filePath);
       return;
     }
@@ -426,7 +496,7 @@ export function createObserver({
       timer.unref?.();
       void tick();
       log(
-        `[observer] watching ${config.claudeProjectsDir} (whitelist: ${watchlist.length ? watchlist.join(',') : '∅'} interval ${config.watchIntervalMs}ms idle ${config.idleTimeoutMs}ms)`,
+        `[observer] watching ${config.claudeProjectsDir} (scope: ${watchlist.length ? watchlist.join(',') : '全部项目，存活会话登记'} interval ${config.watchIntervalMs}ms idle ${config.idleTimeoutMs}ms)`,
       );
     },
     stop() {

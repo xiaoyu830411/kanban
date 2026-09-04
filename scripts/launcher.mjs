@@ -14,7 +14,7 @@
  *   TASKBOARD_TMP_ROOT         临时目录型任务的根目录（默认系统 /tmp）
  *   TASKBOARD_WORKTREE_ROOT    worktree 根（默认 ~/.taskboard/worktrees）
  *   TASKBOARD_REPO_CACHE_ROOT  仓库缓存克隆根（默认 ~/.taskboard/repos）
- *   TASKBOARD_WATCH_PATHS      会话登记白名单（cwd 列表，逗号/冒号分隔；默认空=不登记）
+ *   TASKBOARD_WATCH_PATHS      会话登记范围（可选限制器，cwd 列表逗号/冒号分隔；缺省观察全部项目，仅登记存活会话）
  *   TASKBOARD_WATCH_INTERVAL   观察轮询间隔 ms（默认 5000）
  *   TASKBOARD_WATCH_IDLE_TIMEOUT 空闲转完结阈值 ms（默认 1800000=30 分钟）
  *   TASKBOARD_CLAUDE_DIR       claude 转录根目录（默认 ~/.claude/projects）
