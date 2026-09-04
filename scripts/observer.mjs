@@ -302,8 +302,10 @@ export function createObserver({
     }
   }
 
-  /** 新转录文件收养（#24：全量扫描，存活门槛）：
-   *  pending 绑定 > 启动器领土（恢复绑定或排除）> 可选白名单 > 存活过滤 > 登记。 */
+  /** 新转录文件收养（#25：门槛=会话粒度的新鲜度+存活）：
+   *  pending 绑定 > 启动器领土（恢复绑定，不受新鲜度限制）> 可选白名单
+   *  > mtime 新鲜（空闲阈值内）+ cwd 存活 > 登记。
+   *  陈旧/不够新鲜的文件只跳过不永久排除——老会话被 resume 后仍可收养。 */
   async function adopt(filePath) {
     const sessionId = filePath.split('/').pop().slice(0, -6);
     let stats;
@@ -313,11 +315,8 @@ export function createObserver({
       return; // 文件消失：下轮再看
     }
     if (stats.size === 0) return; // 尚未写入：下轮再看
-    // 静默已久的历史转录（>24h 未动）：不存活、无新意，连读都不读
-    if (now() - stats.mtimeMs > STALE_FILE_MS) {
-      excluded.add(filePath);
-      return;
-    }
+    // 静默已久的历史转录（>24h 未动）：连读都不读（跳过不排除，resume 后可收养）
+    if (now() - stats.mtimeMs > STALE_FILE_MS) return;
     const head = deriveHeadSnapshot(parseJsonlLines(await readHead(filePath)));
     if (!head.cwd) return; // 头部无 cwd（半行）：下轮再看
 
@@ -345,10 +344,10 @@ export function createObserver({
     }
 
     // 启动器领土（#24）：worktree/tmp 现场的会话不登记成新卡——
-    // 任务仍被持有则恢复绑定（覆盖启动器重启丢 pending 的缺口），否则排除。
+    // 任务仍被持有则恢复绑定（覆盖启动器重启丢 pending 的缺口），否则跳过。
+    // 不受新鲜度门槛限制：启动器现场即使闲置超阈值也该绑定。
     const territory = territoryTaskId(head.cwd, config);
     if (territory != null) {
-      let bound = false;
       try {
         const detail = await client.taskDetail(territory);
         if (detail?.task?.column === 'in_progress' && detail.task.heldByAgentId != null) {
@@ -368,13 +367,11 @@ export function createObserver({
             reportedStatus: 'running',
             titleSent: true,
           });
-          bound = true;
           log(`[observer] recovered launched run: task #${territory} ← session ${sessionId.slice(0, 8)} @ ${head.cwd}`);
         }
       } catch {
-        // 任务不存在/网络失败：按排除处理
+        // 任务不存在/网络失败：下轮再看
       }
-      if (!bound) excluded.add(filePath);
       return;
     }
 
@@ -384,7 +381,9 @@ export function createObserver({
       return;
     }
 
-    // 全量模式的登记门槛：存活（死会话不上看板）
+    // 会话粒度门槛（#25）：本文件近期动过（新鲜度）且 cwd 有活进程。
+    // 新鲜度按文件自身判——兄弟会话活着不能让历史死文件混进来。
+    if (now() - stats.mtimeMs > config.idleTimeoutMs) return;
     if (!(await aliveCheck(head.cwd))) {
       excluded.add(filePath);
       return;

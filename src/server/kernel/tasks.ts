@@ -4,6 +4,7 @@ import {
   agents,
   taskComments,
   taskDodItems,
+  taskRuns,
   tasks,
   workspaces,
   type Agent,
@@ -563,6 +564,7 @@ export async function deleteTaskAsMember(memberId: number, taskId: number): Prom
     );
   }
   await getDb().transaction(async (tx) => {
+    await tx.delete(taskRuns).where(eq(taskRuns.taskId, taskId));
     await tx.delete(taskComments).where(eq(taskComments.taskId, taskId));
     await tx.delete(taskDodItems).where(eq(taskDodItems.taskId, taskId));
     await tx.delete(tasks).where(eq(tasks.id, taskId));

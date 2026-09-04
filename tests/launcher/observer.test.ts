@@ -252,6 +252,27 @@ describe('createObserver（登记 / 排除 / 绑定 / 状态流转）', () => {
     expect(client.calls.register).toHaveLength(0);
   });
 
+  it('会话粒度门槛（#25）：同目录历史死文件不因兄弟会话存活而登记；resume 后可收养', async () => {
+    const { client, alive, advance, observer, file } = makeHarness([]);
+    alive['/work/multi'] = true; // cwd 级存活为真（兄弟会话活着）
+    const oldFile = file('proj-m', 'sess-old');
+    appendFileSync(oldFile, JSON.stringify({ type: 'user', message: { content: '旧会话' }, cwd: '/work/multi' }) + '\n');
+    const quiet = new Date(1_000_000_000_000 - 31 * 60_000); // 31 分钟未动（24h 内、超空闲阈值）
+    utimesSync(oldFile, quiet, quiet);
+    appendFileSync(file('proj-m', 'sess-new'), JSON.stringify({ type: 'user', message: { content: '活会话' }, cwd: '/work/multi' }) + '\n');
+
+    await observer.tick();
+    expect(client.calls.register).toHaveLength(1);
+    expect(client.calls.register[0]).toMatchObject({ sessionId: 'sess-new' });
+
+    // 旧会话被 resume（mtime 变新）→ 下一 tick 收养
+    utimesSync(oldFile, new Date(1_000_000_000_000 + 60_000), new Date(1_000_000_000_000 + 60_000));
+    advance(120_000);
+    await observer.tick();
+    expect(client.calls.register).toHaveLength(2);
+    expect(client.calls.register[1]).toMatchObject({ sessionId: 'sess-old' });
+  });
+
   it('pending workdir 命中 → 绑定 launched Run（优先于白名单）', async () => {
     const launches = createLaunchRegistry();
     launches.add('/work/wt', 42);

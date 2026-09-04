@@ -9,7 +9,8 @@ import { POST as bindRoute } from '@/app/api/agent/observations/bind/route';
 import { createAgent as createAgentByKernel, resolveAgentByToken } from '@/server/kernel/agents';
 import { getEventBus } from '@/server/kernel/event-bus';
 import type { DomainEvent } from '@/server/kernel/events';
-import { applyMove } from '@/server/kernel/tasks';
+import { getLatestRunsForTasks } from '@/server/kernel/runs';
+import { applyMove, deleteTaskAsMember, forceReleaseTask } from '@/server/kernel/tasks';
 import { apiRequest, newTaskAt, setupIsolatedDb } from '../helpers';
 
 async function login(name: string): Promise<{ cookie: string; memberId: number }> {
@@ -238,6 +239,19 @@ describe('观察登记（ADR-0005）', () => {
     const second = await register(token, { sessionId: 'sess-d2', cwd: '/tmp/dedup', title: '同目录第二个会话' });
     const body2 = (await second.json()) as { task: { id: number } };
     expect(body2.task.id).toBe(taskId);
+  });
+
+  it('删除带观察档案的任务级联清 run（#25）', async () => {
+    const { memberId } = await login('owner10');
+    const token = await newAgent(memberId, 'claude-code');
+    const created = (await (await register(token, { sessionId: 'sess-del', cwd: '/tmp/del', title: '待删' })).json()) as {
+      task: { id: number };
+    };
+    expect((await getLatestRunsForTasks([created.task.id])).size).toBe(1);
+
+    await forceReleaseTask(memberId, created.task.id); // 持有中不可删，先强制释放
+    await deleteTaskAsMember(memberId, created.task.id); // 之前因 task_runs FK 直接 500
+    expect((await getLatestRunsForTasks([created.task.id])).size).toBe(0);
   });
 
   it('done 永不被观察触碰；未知会话 404；他人 Agent 上报 403', async () => {
